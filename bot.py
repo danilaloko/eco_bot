@@ -303,11 +303,8 @@ class EcoBot:
         offline_messages = self.db.get_offline_messages(user_id)
         
         if offline_messages:
-            await update.message.reply_text(
-                f"📬 **Обработка офлайн сообщений**\n\n"
-                f"Пока бот был недоступен, вы отправили {len(offline_messages)} сообщений. "
-                f"Сейчас я их обработаю..."
-            )
+            # Убираем сообщение пользователю - только логируем
+            logger.info(f"Обрабатываю {len(offline_messages)} офлайн сообщений для пользователя {user_id}")
             
             processed_count = 0
             for msg_id, message_data, message_type, received_date in offline_messages:
@@ -332,11 +329,9 @@ class EcoBot:
                 except Exception as e:
                     logger.error(f"Ошибка обработки офлайн сообщения {msg_id}: {e}")
             
+            # Убираем сообщение пользователю - только логируем результат
             if processed_count > 0:
-                await update.message.reply_text(
-                    f"✅ Обработано {processed_count} офлайн сообщений!\n"
-                    "Теперь можем продолжить с того места, где остановились."
-                )
+                logger.info(f"Успешно обработано {processed_count} офлайн сообщений для пользователя {user_id}")
 
     async def registration_last_name(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Обработка ввода фамилии"""
