@@ -1,0 +1,23 @@
+# Настройки для основного Эко-бота
+BOT_TOKEN=your_main_bot_token_from_botfather
+ADMIN_ID=your_telegram_user_id
+
+# Настройки для Админ-бота (опционально)
+ADMIN_BOT_TOKEN=your_admin_bot_token_from_botfather
+ADMIN_IDS=your_telegram_user_id,additional_admin_id
+
+# Специальные значения:
+# ADMIN_IDS=all - открыть доступ всем (только для тестирования!)
+
+# Примеры:
+# BOT_TOKEN=5187169216:AAH1QzFMVR1cA3GxAVrekwXlCfb9lugV8CE
+# ADMIN_ID=621210181
+# ADMIN_BOT_TOKEN=6234567890:AAGxQzFMVR1cA3GxAVrekwXlCfb9lugXYZ
+# ADMIN_IDS=621210181,987654321
+# ADMIN_IDS=all  # ⚠️ Открытый доступ - только для тестирования!
+
+# Инструкции:
+# 1. Скопируйте этот файл как .env
+# 2. Замените your_* на реальные значения
+# 3. Для получения токенов обратитесь к @BotFather в Telegram
+# 4. Ваш Telegram ID можно узнать у @userinfobot 
