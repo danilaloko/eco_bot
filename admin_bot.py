@@ -48,6 +48,7 @@ EDITING_TASK_LINK = 12
 EDITING_TASK_STATUS = 13
 EDITING_TASK_WEEK = 14
 EDITING_TASK_DEADLINE = 15
+EDITING_TASK_OPEN_DATE = 16
 
 REVIEWING_SUBMISSION = 20
 
@@ -214,6 +215,10 @@ class AdminBot:
             await self._start_edit_description(query, context, data)
         elif data.startswith("edit_link_"):
             await self._start_edit_link(query, context, data)
+        elif data.startswith("edit_open_date_"):
+            await self._start_edit_open_date(query, context, data)
+        elif data.startswith("edit_deadline_"):
+            await self._start_edit_deadline(query, context, data)
         # Новые обработчики для функционала добавления заданий
         elif data.startswith("template_"):
             await self._handle_template_callback(query, context, data)
@@ -1554,12 +1559,18 @@ class AdminBot:
             deadline_dt = datetime.fromisoformat(deadline)
             deadline_str = deadline_dt.strftime('%d.%m.%Y в %H:%M МСК')
         
+        open_date_str = "не установлена"
+        if open_date:
+            open_date_dt = datetime.fromisoformat(open_date)
+            open_date_str = open_date_dt.strftime('%d.%m.%Y в %H:%M МСК')
+        
         text = (
             f"✏️ **Редактирование задания #{task_id}**\n\n"
             f"📝 **Название:** {title}\n"
             f"📄 **Описание:** {description or 'не указано'}\n"
             f"🔗 **Ссылка:** {link or 'не указана'}\n"
-            f"📅 **Неделя:** {week_number or 'не указана'}\n"
+            f"📅 **Дата открытия:** {open_date_str}\n"
+            f"📅 **Неделя:** {week_number or 'не указана'} *(устаревшее поле)*\n"
             f"⏰ **Дедлайн:** {deadline_str}\n"
             f"📊 **Статус:** {status}\n\n"
             f"Что хотите изменить?"
@@ -1569,6 +1580,8 @@ class AdminBot:
             [InlineKeyboardButton("✏️ Название", callback_data=f"edit_title_{task_id}")],
             [InlineKeyboardButton("📄 Описание", callback_data=f"edit_desc_{task_id}")],
             [InlineKeyboardButton("🔗 Ссылку", callback_data=f"edit_link_{task_id}")],
+            [InlineKeyboardButton("📅 Дату открытия", callback_data=f"edit_open_date_{task_id}")],
+            [InlineKeyboardButton("⏰ Дедлайн", callback_data=f"edit_deadline_{task_id}")],
             [InlineKeyboardButton(f"📊 Статус ({status})", callback_data=f"toggle_task_{task_id}")],
             [InlineKeyboardButton("📋 Вернуться к заданию", callback_data=f"task_{task_id}")],
             [InlineKeyboardButton("🏠 Главное меню", callback_data="main_menu")]
@@ -2893,13 +2906,9 @@ class AdminBot:
             logger.error(f"Ошибка при обработке потенциального файла: {e}")
             await query.answer("❌ Произошла ошибка!")
 
-    async def _start_edit_title(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Начинает редактирование названия задания"""
-        query = update.callback_query
-        await query.answer()
-        
-        data = query.data
-        task_id = int(data.split('_')[2])  # edit_title_123
+    async def _start_edit_open_date(self, query, context, data):
+        """Начинает редактирование даты открытия задания"""
+        task_id = int(data.split('_')[3])  # edit_open_date_123
         
         # Сохраняем ID задания в контекст
         context.user_data['editing_task_id'] = task_id
@@ -2907,19 +2916,30 @@ class AdminBot:
         # Получаем задание
         with self.db._get_connection() as conn:
             cursor = conn.cursor()
-            cursor.execute('SELECT title FROM tasks WHERE id = ?', (task_id,))
+            cursor.execute('SELECT open_date FROM tasks WHERE id = ?', (task_id,))
             task = cursor.fetchone()
         
         if not task:
             await query.edit_message_text("❌ Задание не найдено.")
             return ConversationHandler.END
         
-        current_title = task[0]
+        current_open_date = task[0]
+        if current_open_date:
+            open_date_dt = datetime.fromisoformat(current_open_date)
+            current_open_date_str = open_date_dt.strftime('%d.%m.%Y в %H:%M МСК')
+        else:
+            current_open_date_str = "не установлена"
         
         text = (
-            f"✏️ **Редактирование названия задания #{task_id}**\n\n"
-            f"📝 **Текущее название:** {current_title}\n\n"
-            "Введите новое название задания:\n\n"
+            f"✏️ **Редактирование даты открытия задания #{task_id}**\n\n"
+            f"📅 **Текущая дата открытия:** {current_open_date_str}\n\n"
+            "Введите новую дату открытия задания:\n\n"
+            "📋 **Варианты ввода:**\n"
+            "• `сейчас` - открыть сейчас\n"
+            "• `завтра` - завтра в 09:00\n"
+            "• `ДД.ММ.ГГГГ` - конкретная дата в 09:00\n"
+            "• `ДД.ММ.ГГГГ ЧЧ:ММ` - конкретная дата и время\n"
+            "• `неделя` - через неделю в 09:00\n\n"
             "💡 _Для отмены введите_ `/cancel`"
         )
         
@@ -2932,108 +2952,77 @@ class AdminBot:
             parse_mode='Markdown',
             reply_markup=InlineKeyboardMarkup(keyboard)
         )
-        return EDITING_TASK_TITLE
+        return EDITING_TASK_OPEN_DATE
 
-    async def _start_edit_description(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Начинает редактирование описания задания"""
-        query = update.callback_query
-        await query.answer()
-        
-        data = query.data
-        task_id = int(data.split('_')[2])  # edit_desc_123
-        
-        # Сохраняем ID задания в контекст
-        context.user_data['editing_task_id'] = task_id
-        
-        # Получаем задание
-        with self.db._get_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute('SELECT description FROM tasks WHERE id = ?', (task_id,))
-            task = cursor.fetchone()
-        
-        if not task:
-            await query.edit_message_text("❌ Задание не найдено.")
-            return ConversationHandler.END
-        
-        current_description = task[0] or "не указано"
-        
-        text = (
-            f"✏️ **Редактирование описания задания #{task_id}**\n\n"
-            f"📄 **Текущее описание:** {current_description}\n\n"
-            "Введите новое описание задания:\n\n"
-            "💡 _Для отмены введите_ `/cancel`"
-        )
-        
-        keyboard = [
-            [InlineKeyboardButton("❌ Отмена", callback_data=f"task_{task_id}")]
-        ]
-        
-        await query.edit_message_text(
-            text,
-            parse_mode='Markdown',
-            reply_markup=InlineKeyboardMarkup(keyboard)
-        )
-        return EDITING_TASK_DESCRIPTION
-
-    async def _start_edit_link(self, query, context, data):
-        """Начинает редактирование ссылки задания"""
-        query = update.callback_query
-        await query.answer()
-        
-        data = query.data
-        task_id = int(data.split('_')[2])  # edit_link_123
-        
-        # Сохраняем ID задания в контекст
-        context.user_data['editing_task_id'] = task_id
-        
-        # Получаем задание
-        with self.db._get_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute('SELECT link FROM tasks WHERE id = ?', (task_id,))
-            task = cursor.fetchone()
-        
-        if not task:
-            await query.edit_message_text("❌ Задание не найдено.")
-            return ConversationHandler.END
-        
-        current_link = task[0] or "не указана"
-        
-        text = (
-            f"✏️ **Редактирование ссылки задания #{task_id}**\n\n"
-            f"🔗 **Текущая ссылка:** {current_link}\n\n"
-            "Введите новую ссылку на задание (или напишите 'нет' чтобы убрать ссылку):"
-        )
-        
-        keyboard = [
-            [InlineKeyboardButton("❌ Отмена", callback_data=f"task_{task_id}")]
-        ]
-        
-        await query.edit_message_text(
-            text,
-            parse_mode='Markdown',
-            reply_markup=InlineKeyboardMarkup(keyboard)
-        )
-        return EDITING_TASK_LINK
-
-    async def handle_edit_link(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Обрабатывает ввод новой ссылки задания"""
+    async def handle_edit_open_date(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Обрабатывает ввод новой даты открытия задания"""
         if not await self._check_admin_access(update):
             return ConversationHandler.END
         
-        new_link = update.message.text.strip()
-        if new_link.lower() in ['нет', 'no', '-', 'убрать']:
-            new_link = None
-        
+        open_date_input = update.message.text.strip().lower()
         task_id = context.user_data.get('editing_task_id')
+        
         if not task_id:
             await update.message.reply_text("❌ Ошибка: ID задания не найден.")
             return ConversationHandler.END
         
-        # Обновляем ссылку в базе данных
         try:
+            # Обработка различных вариантов ввода
+            if open_date_input in ['сейчас', 'now']:
+                new_open_date = datetime.now(self.moscow_tz)
+            elif open_date_input in ['завтра', 'tomorrow']:
+                new_open_date = datetime.now(self.moscow_tz) + timedelta(days=1)
+                new_open_date = new_open_date.replace(hour=9, minute=0, second=0, microsecond=0)
+            elif open_date_input in ['неделя', 'week']:
+                new_open_date = datetime.now(self.moscow_tz) + timedelta(weeks=1)
+                new_open_date = new_open_date.replace(hour=9, minute=0, second=0, microsecond=0)
+            else:
+                # Попытка парсинга ручного ввода
+                try:
+                    if ' ' in open_date_input:
+                        # Формат с временем
+                        new_open_date = datetime.strptime(open_date_input, '%d.%m.%Y %H:%M')
+                    else:
+                        # Только дата, время по умолчанию 09:00
+                        new_open_date = datetime.strptime(open_date_input, '%d.%m.%Y')
+                        new_open_date = new_open_date.replace(hour=9, minute=0)
+                    
+                    new_open_date = self.moscow_tz.localize(new_open_date)
+                except ValueError:
+                    raise ValueError("Неверный формат даты")
+                
+                # Проверка, что дата открытия не в прошлом (с учетом текущего времени)
+                if new_open_date < datetime.now(self.moscow_tz):
+                    await update.message.reply_text(
+                        "❌ **Дата открытия в прошлом**\n\n"
+                        "Дата открытия должна быть в будущем или сейчас.\n"
+                        "Попробуйте еще раз:"
+                    )
+                    return EDITING_TASK_OPEN_DATE
+                    
+        except ValueError as e:
+            await update.message.reply_text(
+                "❌ **Неверный формат даты**\n\n"
+                "Используйте один из форматов:\n"
+                "• `ДД.ММ.ГГГГ ЧЧ:ММ` (например: 25.12.2024 09:00)\n"
+                "• `ДД.ММ.ГГГГ` (время установится 09:00)\n"
+                "• `сейчас` - открыть сейчас\n"
+                "• `завтра` - завтра в 09:00\n"
+                "• `неделя` - через неделю в 09:00"
+            )
+            return EDITING_TASK_OPEN_DATE
+        
+        # Обновляем дату открытия в базе данных
+        try:
+            # Также обновляем статус is_open в зависимости от новой даты
+            is_open = new_open_date <= datetime.now(self.moscow_tz)
+            
             with self.db._get_connection() as conn:
                 cursor = conn.cursor()
-                cursor.execute('UPDATE tasks SET link = ? WHERE id = ?', (new_link, task_id))
+                cursor.execute(
+                    'UPDATE tasks SET open_date = ?, is_open = ? WHERE id = ?', 
+                    (new_open_date.isoformat(), is_open, task_id)
+                )
                 conn.commit()
             
             keyboard = [
@@ -3042,9 +3031,12 @@ class AdminBot:
                 [InlineKeyboardButton("🏠 Главное меню", callback_data="main_menu")]
             ]
             
+            status_text = "открыто" if is_open else "ожидает открытия"
+            
             await update.message.reply_text(
-                f"✅ **Ссылка задания успешно изменена!**\n\n"
-                f"🔗 **Новая ссылка:** {new_link or 'не указана'}",
+                f"✅ **Дата открытия задания успешно изменена!**\n\n"
+                f"📅 **Новая дата открытия:** {new_open_date.strftime('%d.%m.%Y в %H:%M МСК')}\n"
+                f"📊 **Статус задания:** {status_text}",
                 parse_mode='Markdown',
                 reply_markup=InlineKeyboardMarkup(keyboard)
             )
@@ -3053,73 +3045,64 @@ class AdminBot:
             context.user_data.clear()
             
         except Exception as e:
-            logger.error(f"Ошибка при изменении ссылки задания: {e}")
+            logger.error(f"Ошибка при изменении даты открытия задания: {e}")
             await update.message.reply_text(
-                f"❌ Ошибка при изменении ссылки: {str(e)}"
+                f"❌ Ошибка при изменении даты открытия: {str(e)}"
             )
         
         return ConversationHandler.END
 
-    async def _toggle_task_status(self, query, data):
-        """Переключает статус задания (открыто/закрыто)"""
-        task_id = int(data.split('_')[2])  # toggle_task_123
+    async def _start_edit_deadline(self, query, context, data):
+        """Начинает редактирование дедлайна задания"""
+        task_id = int(data.split('_')[2])  # edit_deadline_123
         
-        # Переключаем статус
+        # Сохраняем ID задания в контекст
+        context.user_data['editing_task_id'] = task_id
+        
+        # Получаем задание
         with self.db._get_connection() as conn:
             cursor = conn.cursor()
-            
-            # Получаем текущий статус
-            cursor.execute('SELECT is_open FROM tasks WHERE id = ?', (task_id,))
-            result = cursor.fetchone()
-            
-            if not result:
-                await query.answer("❌ Задание не найдено!")
-                return
-            
-            current_status = result[0]
-            new_status = not current_status
-            
-            # Обновляем статус
-            cursor.execute('UPDATE tasks SET is_open = ? WHERE id = ?', (new_status, task_id))
-            conn.commit()
-        
-        status_text = "открыто" if new_status else "закрыто"
-        await query.answer(f"✅ Задание {status_text}!")
-        
-        # Возвращаемся к странице задания
-        await self._handle_task_action(query, None, f"task_{task_id}")
-
-    async def _delete_task(self, query, data):
-        """Удаляет задание с подтверждением"""
-        task_id = int(data.split('_')[2])  # delete_task_123
-        
-        # Получаем информацию о задании и количестве отчетов
-        with self.db._get_connection() as conn:
-            cursor = conn.cursor()
-            
-            cursor.execute('SELECT title FROM tasks WHERE id = ?', (task_id,))
+            cursor.execute('SELECT deadline, open_date FROM tasks WHERE id = ?', (task_id,))
             task = cursor.fetchone()
-            
-            if not task:
-                await query.answer("❌ Задание не найдено!")
-                return
-            
-            cursor.execute('SELECT COUNT(*) FROM submissions WHERE task_id = ?', (task_id,))
-            reports_count = cursor.fetchone()[0]
         
-        title = task[0]
+        if not task:
+            await query.edit_message_text("❌ Задание не найдено.")
+            return ConversationHandler.END
+        
+        current_deadline, open_date = task
+        if current_deadline:
+            deadline_dt = datetime.fromisoformat(current_deadline)
+            current_deadline_str = deadline_dt.strftime('%d.%m.%Y в %H:%M МСК')
+        else:
+            current_deadline_str = "не установлен"
+        
+        # Предлагаем автоматический дедлайн
+        if open_date:
+            open_date_dt = datetime.fromisoformat(open_date)
+            suggested_deadline = open_date_dt + timedelta(days=7)
+            suggested_deadline = suggested_deadline.replace(hour=23, minute=59, second=59)
+            suggested_str = suggested_deadline.strftime('%d.%m.%Y в %H:%M МСК')
+        else:
+            suggested_deadline = datetime.now(self.moscow_tz) + timedelta(days=7)
+            suggested_deadline = suggested_deadline.replace(hour=23, minute=59, second=59)
+            suggested_str = suggested_deadline.strftime('%d.%m.%Y в %H:%M МСК')
         
         text = (
-            f"🗑️ **Удаление задания**\n\n"
-            f"📝 **Задание:** {title}\n"
-            f"📤 **Отчетов:** {reports_count}\n\n"
-            f"⚠️ **Внимание!** Это действие нельзя отменить.\n"
-            f"Все связанные отчеты также будут удалены.\n\n"
-            f"Вы уверены?"
+            f"✏️ **Редактирование дедлайна задания #{task_id}**\n\n"
+            f"⏰ **Текущий дедлайн:** {current_deadline_str}\n"
+            f"💡 **Предлагаемый дедлайн:** {suggested_str}\n\n"
+            "Введите новый дедлайн задания:\n\n"
+            "📋 **Варианты ввода:**\n"
+            "• `авто` - автоматический расчет (через неделю)\n"
+            "• `завтра` - завтра в 23:59\n"
+            "• `ДД.ММ.ГГГГ` - конкретная дата в 23:59\n"
+            "• `ДД.ММ.ГГГГ ЧЧ:ММ` - конкретная дата и время\n"
+            "• `неделя` - через неделю в 23:59\n"
+            "• `нет` - убрать дедлайн\n\n"
+            "💡 _Для отмены введите_ `/cancel`"
         )
         
         keyboard = [
-            [InlineKeyboardButton("✅ Да, удалить", callback_data=f"confirm_delete_{task_id}")],
             [InlineKeyboardButton("❌ Отмена", callback_data=f"task_{task_id}")]
         ]
         
@@ -3128,358 +3111,125 @@ class AdminBot:
             parse_mode='Markdown',
             reply_markup=InlineKeyboardMarkup(keyboard)
         )
+        return EDITING_TASK_DEADLINE
 
-    async def _confirm_delete_task(self, query, data):
-        """Подтверждает удаление задания"""
-        task_id = int(data.split('_')[2])  # confirm_delete_123
+    async def handle_edit_deadline(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Обрабатывает ввод нового дедлайна задания"""
+        if not await self._check_admin_access(update):
+            return ConversationHandler.END
         
+        deadline_input = update.message.text.strip().lower()
+        task_id = context.user_data.get('editing_task_id')
+        
+        if not task_id:
+            await update.message.reply_text("❌ Ошибка: ID задания не найден.")
+            return ConversationHandler.END
+        
+        # Получаем дату открытия для валидации
+        with self.db._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('SELECT open_date FROM tasks WHERE id = ?', (task_id,))
+            result = cursor.fetchone()
+            open_date = result[0] if result else None
+        
+        try:
+            # Обработка различных вариантов ввода дедлайна
+            if deadline_input in ['авто', 'auto']:
+                # Автоматический дедлайн: через неделю после открытия
+                if open_date:
+                    open_date_dt = datetime.fromisoformat(open_date)
+                    new_deadline = open_date_dt + timedelta(days=7)
+                else:
+                    new_deadline = datetime.now(self.moscow_tz) + timedelta(days=7)
+                new_deadline = new_deadline.replace(hour=23, minute=59, second=59)
+            elif deadline_input in ['завтра', 'tomorrow']:
+                new_deadline = datetime.now(self.moscow_tz).replace(hour=23, minute=59, second=59) + timedelta(days=1)
+            elif deadline_input in ['неделя', 'week']:
+                new_deadline = datetime.now(self.moscow_tz) + timedelta(weeks=1)
+                new_deadline = new_deadline.replace(hour=23, minute=59, second=59)
+            elif deadline_input in ['нет', 'no', '-']:
+                new_deadline = None
+            else:
+                # Попытка парсинга ручного ввода
+                try:
+                    if ' ' in deadline_input:
+                        new_deadline = datetime.strptime(deadline_input, '%d.%m.%Y %H:%M')
+                    else:
+                        new_deadline = datetime.strptime(deadline_input, '%d.%m.%Y')
+                        new_deadline = new_deadline.replace(hour=23, minute=59)
+                    
+                    new_deadline = self.moscow_tz.localize(new_deadline)
+                except ValueError:
+                    raise ValueError("Неверный формат даты")
+                
+                # Проверка, что дедлайн в будущем
+                if new_deadline and new_deadline <= datetime.now(self.moscow_tz):
+                    await update.message.reply_text(
+                        "❌ **Дедлайн в прошлом**\n\n"
+                        "Дедлайн должен быть в будущем.\n"
+                        "Попробуйте еще раз:"
+                    )
+                    return EDITING_TASK_DEADLINE
+                
+                # Проверка, что дедлайн не раньше даты открытия
+                if new_deadline and open_date:
+                    open_date_dt = datetime.fromisoformat(open_date)
+                    if new_deadline <= open_date_dt:
+                        await update.message.reply_text(
+                            "❌ **Дедлайн раньше даты открытия**\n\n"
+                            "Дедлайн должен быть позже даты открытия задания.\n"
+                            "Попробуйте еще раз:"
+                        )
+                        return EDITING_TASK_DEADLINE
+                    
+        except ValueError as e:
+            await update.message.reply_text(
+                "❌ **Неверный формат даты**\n\n"
+                "Используйте один из форматов:\n"
+                "• `ДД.ММ.ГГГГ ЧЧ:ММ` (например: 25.12.2024 23:59)\n"
+                "• `ДД.ММ.ГГГГ` (время установится 23:59)\n"
+                "• `авто` - автоматический расчет\n"
+                "• `завтра` - завтра в 23:59\n"
+                "• `неделя` - через неделю\n"
+                "• `нет` - без дедлайна"
+            )
+            return EDITING_TASK_DEADLINE
+        
+        # Обновляем дедлайн в базе данных
         try:
             with self.db._get_connection() as conn:
                 cursor = conn.cursor()
-                
-                # Удаляем сначала все отчеты по заданию
-                cursor.execute('DELETE FROM submissions WHERE task_id = ?', (task_id,))
-                
-                # Затем удаляем само задание
-                cursor.execute('DELETE FROM tasks WHERE id = ?', (task_id,))
-                
+                cursor.execute(
+                    'UPDATE tasks SET deadline = ? WHERE id = ?', 
+                    (new_deadline.isoformat() if new_deadline else None, task_id)
+                )
                 conn.commit()
             
-            await query.answer("✅ Задание удалено!")
-            
-            # Переходим к списку заданий
-            await self._show_tasks_list(query)
-            
-        except Exception as e:
-            logger.error(f"Ошибка при удалении задания {task_id}: {e}")
-            await query.answer("❌ Ошибка при удалении!")
-            await self._handle_task_action(query, None, f"task_{task_id}")
-
-    async def _show_task_reports(self, query, data):
-        """Показывает отчеты по конкретному заданию"""
-        task_id = int(data.split('_')[2])  # task_reports_123
-        
-        with self.db._get_connection() as conn:
-            cursor = conn.cursor()
-            
-            # Получаем название задания
-            cursor.execute('SELECT title FROM tasks WHERE id = ?', (task_id,))
-            task = cursor.fetchone()
-            
-            if not task:
-                await query.edit_message_text("❌ Задание не найдено.")
-                return
-            
-            # Получаем отчеты по заданию
-            cursor.execute('''
-                SELECT s.id, s.user_id, s.submission_date, s.submission_type, s.status, 
-                       s.is_on_time, u.first_name, u.last_name
-                FROM submissions s
-                LEFT JOIN users u ON s.user_id = u.user_id
-                WHERE s.task_id = ?
-                ORDER BY s.submission_date DESC
-                LIMIT 10
-            ''', (task_id,))
-            reports = cursor.fetchall()
-        
-        task_title = task[0]
-        
-        if not reports:
-            text = f"📋 **Отчеты по заданию**\n{task_title}\n\n📭 Отчетов пока нет."
             keyboard = [
                 [InlineKeyboardButton("📋 Вернуться к заданию", callback_data=f"task_{task_id}")],
+                [InlineKeyboardButton("📝 Список заданий", callback_data="list_tasks")],
                 [InlineKeyboardButton("🏠 Главное меню", callback_data="main_menu")]
             ]
-        else:
-            text = f"📋 **Отчеты по заданию** ({len(reports)})\n{task_title}\n\n"
             
-            keyboard = []
-            for report in reports:
-                submission_id, user_id, date, sub_type, status, is_on_time, first_name, last_name = report
-                
-                # Форматируем дату
-                date_obj = datetime.fromisoformat(date.replace('Z', '+00:00'))
-                formatted_date = date_obj.strftime("%d.%m %H:%M")
-                
-                # Имя пользователя
-                user_name = f"{first_name or ''} {last_name or ''}".strip() or f"ID{user_id}"
-                
-                # Статусы
-                status_emoji = {"pending": "⏳", "approved": "✅", "rejected": "❌"}.get(status, "❓")
-                time_emoji = "⏰" if not is_on_time else "✅"
-                type_emoji = {"text": "📝", "photo": "📸", "video": "🎥", "document": "📄"}.get(sub_type, "📝")
-                
-                button_text = f"{type_emoji}{status_emoji}{time_emoji} {user_name} • {formatted_date}"
-                keyboard.append([InlineKeyboardButton(
-                    button_text[:50],
-                    callback_data=f"report_{submission_id}"
-                )])
+            deadline_text = new_deadline.strftime('%d.%m.%Y в %H:%M МСК') if new_deadline else "не установлен"
             
-            keyboard.append([InlineKeyboardButton("📋 Вернуться к заданию", callback_data=f"task_{task_id}")])
-            keyboard.append([InlineKeyboardButton("🏠 Главное меню", callback_data="main_menu")])
-        
-        await query.edit_message_text(
-            text,
-            parse_mode='Markdown',
-            reply_markup=InlineKeyboardMarkup(keyboard)
-        )
-
-    async def _show_user_profile(self, query, data):
-        """Показывает профиль пользователя"""
-        user_id = int(data.split('_')[2])  # user_profile_123
-        
-        with self.db._get_connection() as conn:
-            cursor = conn.cursor()
-            
-            # Получаем информацию о пользователе
-            cursor.execute('''
-                SELECT user_id, username, telegram_first_name, telegram_last_name,
-                       first_name, last_name, participation_type, family_members_count,
-                       children_info, registration_completed, registration_date
-                FROM users WHERE user_id = ?
-            ''', (user_id,))
-            user = cursor.fetchone()
-            
-            if not user:
-                await query.edit_message_text("❌ Пользователь не найден.")
-                return
-            
-            # Статистика пользователя
-            cursor.execute('SELECT COUNT(*) FROM submissions WHERE user_id = ?', (user_id,))
-            total_submissions = cursor.fetchone()[0]
-            
-            cursor.execute('SELECT COUNT(*) FROM submissions WHERE user_id = ? AND status = "approved"', (user_id,))
-            approved_submissions = cursor.fetchone()[0]
-            
-            cursor.execute('SELECT COUNT(*) FROM submissions WHERE user_id = ? AND is_on_time = TRUE', (user_id,))
-            on_time_submissions = cursor.fetchone()[0]
-        
-        (uid, username, tg_first, tg_last, first_name, last_name, participation_type,
-         family_count, children_info, registration_completed, reg_date) = user
-        
-        # Форматируем информацию
-        full_name = f"{first_name or ''} {last_name or ''}".strip() or "Не указано"
-        tg_name = f"{tg_first or ''} {tg_last or ''}".strip() or "Не указано"
-        username_str = f"@{username}" if username else "Не указан"
-        
-        reg_status = "✅ Завершена" if registration_completed else "❌ Не завершена"
-        participation = {"individual": "👤 Индивидуальное", "family": "👨‍👩‍👧‍👦 Семейное"}.get(participation_type, participation_type)
-        
-        if reg_date:
-            reg_date_obj = datetime.fromisoformat(reg_date.replace('Z', '+00:00'))
-            formatted_reg_date = reg_date_obj.strftime("%d.%m.%Y в %H:%M")
-        else:
-            formatted_reg_date = "Не указана"
-        
-        text = (
-            f"👤 **Профиль пользователя**\n\n"
-            f"🆔 **ID:** {uid}\n"
-            f"👤 **Имя в Telegram:** {tg_name}\n"
-            f"📱 **Username:** {username_str}\n"
-            f"📝 **Полное имя:** {full_name}\n"
-            f"🏠 **Тип участия:** {participation}\n"
-            f"👨‍👩‍👧‍👦 **Участников в семье:** {family_count or 1}\n"
-            f"👶 **Информация о детях:** {children_info or 'Не указана'}\n"
-            f"✅ **Регистрация:** {reg_status}\n"
-            f"📅 **Дата регистрации:** {formatted_reg_date}\n\n"
-            f"📊 **Статистика:**\n"
-            f"   • Всего отчетов: {total_submissions}\n"
-            f"   • Одобрено: {approved_submissions}\n"
-            f"   • В срок: {on_time_submissions}\n"
-            f"   • Процент одобрения: {approved_submissions/max(total_submissions, 1)*100:.1f}%"
-        )
-        
-        keyboard = [
-            [InlineKeyboardButton("📤 Отчеты пользователя", callback_data=f"user_reports_{user_id}")],
-            [InlineKeyboardButton("🔙 Назад", callback_data="reports_menu")],
-            [InlineKeyboardButton("🏠 Главное меню", callback_data="main_menu")]
-        ]
-        
-        await query.edit_message_text(
-            text,
-            parse_mode='Markdown',
-            reply_markup=InlineKeyboardMarkup(keyboard)
-        )
-
-    async def _show_user_reports(self, query, data):
-        """Показывает отчеты конкретного пользователя"""
-        user_id = int(data.split('_')[2])  # user_reports_123
-        
-        with self.db._get_connection() as conn:
-            cursor = conn.cursor()
-            
-            # Получаем имя пользователя
-            cursor.execute('SELECT first_name, last_name FROM users WHERE user_id = ?', (user_id,))
-            user = cursor.fetchone()
-            
-            if not user:
-                await query.edit_message_text("❌ Пользователь не найден.")
-                return
-            
-            user_name = f"{user[0] or ''} {user[1] or ''}".strip() or f"ID{user_id}"
-            
-            # Получаем отчеты пользователя
-            cursor.execute('''
-                SELECT s.id, s.submission_date, s.submission_type, s.status, 
-                       s.is_on_time, t.title
-                FROM submissions s
-                JOIN tasks t ON s.task_id = t.id
-                WHERE s.user_id = ?
-                ORDER BY s.submission_date DESC
-                LIMIT 10
-            ''', (user_id,))
-            reports = cursor.fetchall()
-        
-        if not reports:
-            text = f"👤 **Отчеты пользователя**\n{user_name}\n\n📭 Отчетов пока нет."
-            keyboard = [
-                [InlineKeyboardButton("👤 Профиль", callback_data=f"user_profile_{user_id}")],
-                [InlineKeyboardButton("🏠 Главное меню", callback_data="main_menu")]
-            ]
-        else:
-            text = f"👤 **Отчеты пользователя** ({len(reports)})\n{user_name}\n\n"
-            
-            keyboard = []
-            for report in reports:
-                submission_id, date, sub_type, status, is_on_time, task_title = report
-                
-                # Форматируем дату
-                date_obj = datetime.fromisoformat(date.replace('Z', '+00:00'))
-                formatted_date = date_obj.strftime("%d.%m %H:%M")
-                
-                # Статусы
-                status_emoji = {"pending": "⏳", "approved": "✅", "rejected": "❌"}.get(status, "❓")
-                time_emoji = "⏰" if not is_on_time else "✅"
-                type_emoji = {"text": "📝", "photo": "📸", "video": "🎥", "document": "📄"}.get(sub_type, "📝")
-                
-                button_text = f"{type_emoji}{status_emoji}{time_emoji} {task_title[:20]}... • {formatted_date}"
-                keyboard.append([InlineKeyboardButton(
-                    button_text[:50],
-                    callback_data=f"report_{submission_id}"
-                )])
-            
-            keyboard.append([InlineKeyboardButton("👤 Профиль", callback_data=f"user_profile_{user_id}")])
-            keyboard.append([InlineKeyboardButton("🏠 Главное меню", callback_data="main_menu")])
-        
-        await query.edit_message_text(
-            text,
-            parse_mode='Markdown',
-            reply_markup=InlineKeyboardMarkup(keyboard)
-        )
-
-    async def _handle_export_data(self, query):
-        """Обрабатывает команду экспорта данных"""
-        text = (
-            "📊 **Экспорт данных**\n\n"
-            "Выберите тип данных для экспорта:"
-        )
-        
-        keyboard = [
-            [InlineKeyboardButton("👥 Пользователи", callback_data="export_users")],
-            [InlineKeyboardButton("📋 Задания", callback_data="export_tasks")],
-            [InlineKeyboardButton("📤 Отчеты", callback_data="export_submissions")],
-            [InlineKeyboardButton("📊 Полная выгрузка", callback_data="export_full")],
-            [InlineKeyboardButton("🔙 Системное меню", callback_data="system_menu")]
-        ]
-        
-        await query.edit_message_text(
-            text,
-            parse_mode='Markdown',
-            reply_markup=InlineKeyboardMarkup(keyboard)
-        )
-
-    async def _handle_clear_logs(self, query):
-        """Обрабатывает команду очистки логов"""
-        # Проверяем размер логов
-        log_stats = self._get_log_stats()
-        
-        text = (
-            "🧹 **Очистка системных логов**\n\n"
-            f"📂 **Текущий статус:**\n"
-            f"• Потенциальные отчеты: {log_stats['potential_reports']}\n"
-            f"• Обработанные офлайн-сообщения: {log_stats['processed_offline']}\n"
-            f"• Записи состояний: {log_stats['user_states']}\n"
-            f"• Старые запросы поддержки: {log_stats['old_support_requests']}\n\n"
-            f"⚠️ **Внимание!** Это действие необратимо.\n"
-            f"Рекомендуется сначала сделать экспорт данных.\n\n"
-            f"Продолжить очистку?"
-        )
-        
-        keyboard = [
-            [InlineKeyboardButton("✅ Да, очистить", callback_data="confirm_clear_logs")],
-            [InlineKeyboardButton("❌ Отмена", callback_data="system_menu")]
-        ]
-        
-        await query.edit_message_text(
-            text,
-            parse_mode='Markdown',
-            reply_markup=InlineKeyboardMarkup(keyboard)
-        )
-
-    async def _confirm_clear_logs(self, query):
-        """Подтверждает очистку логов"""
-        try:
-            cleaned = self._perform_log_cleanup()
-            
-            text = (
-                "✅ **Очистка завершена успешно!**\n\n"
-                f"📊 **Результаты:**\n"
-                f"• Удалено потенциальных отчетов: {cleaned['potential_reports']}\n"
-                f"• Удалено офлайн-сообщений: {cleaned['offline_messages']}\n"
-                f"• Очищено старых состояний: {cleaned['old_states']}\n"
-                f"• Архивировано запросов поддержки: {cleaned['support_requests']}\n\n"
-                f"💾 **База данных оптимизирована**"
+            await update.message.reply_text(
+                f"✅ **Дедлайн задания успешно изменен!**\n\n"
+                f"⏰ **Новый дедлайн:** {deadline_text}",
+                parse_mode='Markdown',
+                reply_markup=InlineKeyboardMarkup(keyboard)
             )
             
+            # Очищаем данные
+            context.user_data.clear()
+            
         except Exception as e:
-            logger.error(f"Ошибка при очистке логов: {e}")
-            text = (
-                "❌ **Ошибка при очистке!**\n\n"
-                f"Подробности: {str(e)}\n\n"
-                f"Проверьте логи для получения дополнительной информации."
+            logger.error(f"Ошибка при изменении дедлайна задания: {e}")
+            await update.message.reply_text(
+                f"❌ Ошибка при изменении дедлайна: {str(e)}"
             )
         
-        keyboard = [
-            [InlineKeyboardButton("🔧 Системное меню", callback_data="system_menu")],
-            [InlineKeyboardButton("🏠 Главное меню", callback_data="main_menu")]
-        ]
-        
-        await query.edit_message_text(
-            text,
-            parse_mode='Markdown',
-            reply_markup=InlineKeyboardMarkup(keyboard)
-        )
-
-    async def _handle_specific_export(self, query, data):
-        """Обрабатывает команду экспорта конкретных данных"""
-        export_type = data.split('_')[1]  # export_users -> users
-        
-        try:
-            # Генерируем файл экспорта
-            file_path = await self._generate_export_file(export_type)
-            
-            if file_path:
-                # Отправляем файл пользователю
-                with open(file_path, 'rb') as file:
-                    await query.message.reply_document(
-                        document=file,
-                        filename=os.path.basename(file_path),
-                        caption=f"📊 Экспорт данных: {self._get_export_type_name(export_type)}"
-                    )
-                
-                # Удаляем временный файл
-                os.remove(file_path)
-                
-                await query.answer("✅ Файл отправлен!")
-            else:
-                await query.answer("❌ Ошибка при создании файла экспорта")
-                
-        except Exception as e:
-            logger.error(f"Ошибка при экспорте {export_type}: {e}")
-            await query.answer(f"❌ Ошибка: {str(e)}")
-        
-        # Возвращаемся к меню экспорта
-        await self._handle_export_data(query)
+        return ConversationHandler.END
 
     async def cancel_conversation(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Отменяет текущий диалог"""
@@ -3607,12 +3357,36 @@ def main():
         per_message=False
     )
     
+    # ConversationHandler для редактирования даты открытия задания
+    edit_open_date_handler = ConversationHandler(
+        entry_points=[CallbackQueryHandler(admin_bot._start_edit_open_date, pattern="^edit_open_date_")],
+        states={
+            EDITING_TASK_OPEN_DATE: [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_bot.handle_edit_open_date)]
+        },
+        fallbacks=[CommandHandler("cancel", admin_bot.cancel_conversation)],
+        name="edit_open_date",
+        per_message=False
+    )
+    
+    # ConversationHandler для редактирования дедлайна задания
+    edit_deadline_handler = ConversationHandler(
+        entry_points=[CallbackQueryHandler(admin_bot._start_edit_deadline, pattern="^edit_deadline_")],
+        states={
+            EDITING_TASK_DEADLINE: [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_bot.handle_edit_deadline)]
+        },
+        fallbacks=[CommandHandler("cancel", admin_bot.cancel_conversation)],
+        name="edit_deadline",
+        per_message=False
+    )
+    
     # Регистрируем обработчики
     application.add_handler(CommandHandler("start", admin_bot.start_command))
     application.add_handler(add_task_handler)
     application.add_handler(edit_title_handler)
     application.add_handler(edit_description_handler)
     application.add_handler(edit_link_handler)
+    application.add_handler(edit_open_date_handler)
+    application.add_handler(edit_deadline_handler)
     application.add_handler(CallbackQueryHandler(admin_bot.handle_callback))
     
     # Устанавливаем команды бота
