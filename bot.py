@@ -973,10 +973,9 @@ class EcoBot:
         )
 
     async def _send_tasks_bank(self, update: Update):
-        """Показывает банк заданий - сразу открытые задания"""
+        """Показывает банк заданий - только открытые задания"""
         all_tasks = self.db.get_all_tasks()
         open_tasks = [task for task in all_tasks if task[4]]  # is_open = True
-        archived_tasks = [task for task in all_tasks if not task[4]]  # is_open = False
         
         current_week_tasks = self.db.get_current_week_tasks()
         
@@ -984,17 +983,12 @@ class EcoBot:
             text = (
                 "🏦 **Банк заданий**\n\n"
                 f"📅 Задания этой недели: {len(current_week_tasks)}\n"
-                f"🟢 Открытых заданий: 0\n"
-                f"📁 Архивных заданий: {len(archived_tasks)}\n\n"
+                f"🟢 Открытых заданий: 0\n\n"
                 "🚫 На данный момент нет открытых заданий.\n"
                 "Задания публикуются по понедельникам и четвергам в 11:00 МСК."
             )
             
-            # Показываем только архивные если есть
-            keyboard = []
-            if archived_tasks:
-                keyboard.append([InlineKeyboardButton("📁 Показать архивные", callback_data="show_archived_tasks")])
-            keyboard.append([InlineKeyboardButton("🏠 Главное меню", callback_data="main_menu")])
+            keyboard = [[InlineKeyboardButton("🏠 Главное меню", callback_data="main_menu")]]
             
             await update.message.reply_text(
                 text,
@@ -1006,8 +1000,7 @@ class EcoBot:
         text = (
             "🏦 **Банк заданий**\n\n"
             f"📅 Задания этой недели: {len(current_week_tasks)}\n"
-            f"🟢 Открытых заданий: {len(open_tasks)}\n"
-            f"📁 Архивных заданий: {len(archived_tasks)}\n\n"
+            f"🟢 Открытых заданий: {len(open_tasks)}\n\n"
             "**🟢 Открытые задания:**\n"
             "Нажмите на задание, чтобы перейти к его описанию:"
         )
@@ -1026,9 +1019,7 @@ class EcoBot:
                     url=link
                 )])
         
-        # Кнопки навигации
-        if archived_tasks:
-            keyboard.append([InlineKeyboardButton("📁 Показать архивные", callback_data="show_archived_tasks")])
+        # Кнопка возврата в главное меню
         keyboard.append([InlineKeyboardButton("🏠 Главное меню", callback_data="main_menu")])
         
         await update.message.reply_text(
@@ -1475,9 +1466,6 @@ class EcoBot:
             elif data == "tasks_bank":
                 await self._show_tasks_bank_callback(query)
             
-            elif data == "show_archived_tasks":
-                await self._show_archived_tasks_callback(query)
-            
             elif data.startswith("submit_task_"):
                 task_id = int(data.split("_")[-1])
                 await self._start_task_submission(query, context, task_id)
@@ -1527,10 +1515,9 @@ class EcoBot:
         )
 
     async def _show_tasks_bank_callback(self, query):
-        """Показывает банк заданий через callback - сразу открытые задания"""
+        """Показывает банк заданий через callback - только открытые задания"""
         all_tasks = self.db.get_all_tasks()
         open_tasks = [task for task in all_tasks if task[4]]  # is_open = True
-        archived_tasks = [task for task in all_tasks if not task[4]]  # is_open = False
         
         current_week_tasks = self.db.get_current_week_tasks()
         
@@ -1538,17 +1525,12 @@ class EcoBot:
             text = (
                 "🏦 **Банк заданий**\n\n"
                 f"📅 Задания этой недели: {len(current_week_tasks)}\n"
-                f"🟢 Открытых заданий: 0\n"
-                f"📁 Архивных заданий: {len(archived_tasks)}\n\n"
+                f"🟢 Открытых заданий: 0\n\n"
                 "🚫 На данный момент нет открытых заданий.\n"
                 "Задания публикуются по понедельникам и четвергам в 11:00 МСК."
             )
             
-            # Показываем только архивные если есть
-            keyboard = []
-            if archived_tasks:
-                keyboard.append([InlineKeyboardButton("📁 Показать архивные", callback_data="show_archived_tasks")])
-            keyboard.append([InlineKeyboardButton("🏠 Главное меню", callback_data="main_menu")])
+            keyboard = [[InlineKeyboardButton("🏠 Главное меню", callback_data="main_menu")]]
             
             await query.edit_message_text(
                 text,
@@ -1560,8 +1542,7 @@ class EcoBot:
         text = (
             "🏦 **Банк заданий**\n\n"
             f"📅 Задания этой недели: {len(current_week_tasks)}\n"
-            f"🟢 Открытых заданий: {len(open_tasks)}\n"
-            f"📁 Архивных заданий: {len(archived_tasks)}\n\n"
+            f"🟢 Открытых заданий: {len(open_tasks)}\n\n"
             "**🟢 Открытые задания:**\n"
             "Нажмите на задание, чтобы перейти к его описанию:"
         )
@@ -1580,9 +1561,7 @@ class EcoBot:
                     url=link
                 )])
         
-        # Кнопки навигации
-        if archived_tasks:
-            keyboard.append([InlineKeyboardButton("📁 Показать архивные", callback_data="show_archived_tasks")])
+        # Кнопка возврата в главное меню
         keyboard.append([InlineKeyboardButton("🏠 Главное меню", callback_data="main_menu")])
         
         await query.edit_message_text(
