@@ -39,7 +39,7 @@ logger = logging.getLogger(__name__)
 ADDING_TASK_TITLE = 1
 ADDING_TASK_DESCRIPTION = 2
 ADDING_TASK_LINK = 3
-ADDING_TASK_WEEK = 4
+ADDING_TASK_OPEN_DATE = 4
 ADDING_TASK_DEADLINE = 5
 
 EDITING_TASK_TITLE = 10
@@ -250,14 +250,15 @@ class AdminBot:
             return
         
         # Применяем шаблон
-        current_week = datetime.now(self.moscow_tz).isocalendar()[1]
-        template['title'] = f"{template['title']} - Неделя {current_week}"
+        current_date = datetime.now(self.moscow_tz)
+        template['title'] = f"{template['title']} - {current_date.strftime('%d.%m.%Y')}"
         
         context.user_data['adding_task'] = template.copy()
-        context.user_data['adding_task']['week_number'] = current_week
+        context.user_data['adding_task']['open_date'] = current_date
         
-        # Автоматически устанавливаем дедлайн
-        deadline = self._calculate_auto_deadline(current_week)
+        # Автоматически устанавливаем дедлайн (через неделю)
+        deadline = current_date + timedelta(days=7)
+        deadline = deadline.replace(hour=23, minute=59, second=59)
         context.user_data['adding_task']['deadline'] = deadline
         
         # Показываем предварительный просмотр
@@ -285,13 +286,18 @@ class AdminBot:
         
         try:
             # Создаем задание в базе данных
+            # Определяем, открыто ли задание сейчас
+            open_date = task_data.get('open_date', datetime.now(self.moscow_tz))
+            is_open = open_date <= datetime.now(self.moscow_tz)
+            
             self.db.add_task(
                 title=task_data['title'],
                 description=task_data['description'],
                 link=task_data['link'],
-                week_number=task_data['week_number'],
+                week_number=None,  # Больше не используем номер недели
                 deadline=task_data['deadline'],
-                is_open=True
+                is_open=is_open,
+                open_date=open_date
             )
             
             # Получаем ID созданного задания
@@ -306,10 +312,10 @@ class AdminBot:
                 f"📝 **Название:** {task_data['title']}\n"
                 f"📄 **Описание:** {task_data['description'][:100]}{'...' if len(task_data['description']) > 100 else ''}\n"
                 f"🔗 **Ссылка:** {task_data['link'] or 'не указана'}\n"
-                f"📅 **Неделя:** {task_data['week_number'] or 'не привязана'}\n"
+                f"📅 **Открытие:** {open_date.strftime('%d.%m.%Y в %H:%M МСК')}\n"
                 f"⏰ **Дедлайн:** {task_data['deadline'].strftime('%d.%m.%Y в %H:%M МСК') if task_data['deadline'] else 'не установлен'}\n"
-                f"🟢 **Статус:** Открыто\n\n"
-                f"🎉 **Задание доступно пользователям!**"
+                f"🟢 **Статус:** {'Открыто' if is_open else 'Ожидает открытия'}\n\n"
+                f"🎉 **Задание {'доступно пользователям' if is_open else 'будет открыто в указанное время'}!**"
             )
             
             keyboard = [
@@ -360,12 +366,14 @@ class AdminBot:
             await query.edit_message_text("❌ Данные задания не найдены. Начните заново.")
             return
         
+        open_date = task_data.get('open_date', datetime.now(self.moscow_tz))
+        
         text = (
             "✏️ **РЕДАКТИРОВАНИЕ ЗАДАНИЯ**\n\n"
             f"📝 **Название:** {task_data['title']}\n"
             f"📄 **Описание:** {task_data['description'][:100]}{'...' if len(task_data['description']) > 100 else ''}\n"
             f"🔗 **Ссылка:** {task_data['link'] or 'не указана'}\n"
-            f"📅 **Неделя:** {task_data['week_number'] or 'не привязана'}\n"
+            f"📅 **Открытие:** {open_date.strftime('%d.%m.%Y в %H:%M МСК')}\n"
             f"⏰ **Дедлайн:** {task_data['deadline'].strftime('%d.%m.%Y в %H:%M МСК') if task_data['deadline'] else 'не установлен'}\n\n"
             f"Что хотите изменить?"
         )
@@ -374,7 +382,7 @@ class AdminBot:
             [InlineKeyboardButton("📝 Название", callback_data="edit_preview_title")],
             [InlineKeyboardButton("📄 Описание", callback_data="edit_preview_description")],
             [InlineKeyboardButton("🔗 Ссылку", callback_data="edit_preview_link")],
-            [InlineKeyboardButton("📅 Неделю", callback_data="edit_preview_week")],
+            [InlineKeyboardButton("📅 Дату открытия", callback_data="edit_preview_open_date")],
             [InlineKeyboardButton("⏰ Дедлайн", callback_data="edit_preview_deadline")],
             [InlineKeyboardButton("✅ Готово, создать", callback_data="confirm_create_task")],
             [InlineKeyboardButton("❌ Отменить", callback_data="tasks_menu")]
@@ -766,65 +774,82 @@ class AdminBot:
             f"✅ **Ссылка {'добавлена' if link else 'пропущена'}!**\n"
             f"🔗 *{link or 'не указана'}*\n\n"
             f"📊 **Прогресс:** {progress} (3/5)\n\n"
-            f"📅 **Шаг 4/5:** Введите номер недели\n"
-            f"💡 *Текущая неделя: {current_week}*\n\n"
+            f"📅 **Шаг 4/5:** Установите дату открытия задания\n"
+            f"💡 *Когда задание станет доступно пользователям*\n\n"
             f"📋 **Варианты ввода:**\n"
-            f"• Номер недели: `1` - `53`\n"
-            f"• Текущая неделя: `текущая` или `current`\n"
-            f"• Следующая неделя: `следующая` или `next`\n"
-            f"• Без привязки к неделе: `нет` или `no`"
+            f"• Сейчас: `сейчас` или `now`\n"
+            f"• Завтра: `завтра` или `tomorrow`\n"
+            f"• Конкретная дата: `ДД.ММ.ГГГГ` или `ДД.ММ.ГГГГ ЧЧ:ММ`\n"
+            f"• Через неделю: `неделя` или `week`"
         )
-        return ADDING_TASK_WEEK
+        return ADDING_TASK_OPEN_DATE
 
-    async def handle_add_task_week(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Обрабатывает ввод номера недели"""
+    async def handle_add_task_open_date(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Обрабатывает ввод даты открытия задания"""
         if not await self._check_admin_access(update):
             return ConversationHandler.END
         
-        week_input = update.message.text.strip().lower()
-        current_week = datetime.now(self.moscow_tz).isocalendar()[1]
+        open_date_input = update.message.text.strip().lower()
         
-        # Обработка различных вариантов ввода
-        if week_input in ['текущая', 'current']:
-            week_number = current_week
-        elif week_input in ['следующая', 'next']:
-            week_number = current_week + 1 if current_week < 53 else 1
-        elif week_input in ['нет', 'no', '-']:
-            week_number = None
-        else:
-            try:
-                week_number = int(week_input)
-                if week_number < 1 or week_number > 53:
-                    raise ValueError()
-            except ValueError:
-                await update.message.reply_text(
-                    "❌ **Некорректный номер недели**\n\n"
-                    "Введите число от 1 до 53 или используйте ключевые слова:\n"
-                    "• `текущая` - текущая неделя\n"
-                    "• `следующая` - следующая неделя\n"
-                    "• `нет` - без привязки к неделе"
-                )
-                return ADDING_TASK_WEEK
+        try:
+            # Обработка различных вариантов ввода
+            if open_date_input in ['сейчас', 'now']:
+                open_date = datetime.now(self.moscow_tz)
+            elif open_date_input in ['завтра', 'tomorrow']:
+                open_date = datetime.now(self.moscow_tz) + timedelta(days=1)
+                open_date = open_date.replace(hour=9, minute=0, second=0, microsecond=0)
+            elif open_date_input in ['неделя', 'week']:
+                open_date = datetime.now(self.moscow_tz) + timedelta(weeks=1)
+                open_date = open_date.replace(hour=9, minute=0, second=0, microsecond=0)
+            else:
+                # Попытка парсинга ручного ввода
+                try:
+                    if ' ' in open_date_input:
+                        # Формат с временем
+                        open_date = datetime.strptime(open_date_input, '%d.%m.%Y %H:%M')
+                    else:
+                        # Только дата, время по умолчанию 09:00
+                        open_date = datetime.strptime(open_date_input, '%d.%m.%Y')
+                        open_date = open_date.replace(hour=9, minute=0)
+                    
+                    open_date = self.moscow_tz.localize(open_date)
+                except ValueError:
+                    raise ValueError("Неверный формат даты")
+                
+                # Проверка, что дата открытия не в прошлом (с учетом текущего времени)
+                if open_date < datetime.now(self.moscow_tz):
+                    await update.message.reply_text(
+                        "❌ **Дата открытия в прошлом**\n\n"
+                        "Дата открытия должна быть в будущем или сейчас.\n"
+                        "Попробуйте еще раз:"
+                    )
+                    return ADDING_TASK_OPEN_DATE
+                    
+        except ValueError as e:
+            await update.message.reply_text(
+                "❌ **Неверный формат даты**\n\n"
+                "Используйте один из форматов:\n"
+                "• `ДД.ММ.ГГГГ ЧЧ:ММ` (например: 25.12.2024 09:00)\n"
+                "• `ДД.ММ.ГГГГ` (время установится 09:00)\n"
+                "• `сейчас` - открыть сейчас\n"
+                "• `завтра` - завтра в 09:00\n"
+                "• `неделя` - через неделю в 09:00"
+            )
+            return ADDING_TASK_OPEN_DATE
         
-        context.user_data['adding_task']['week_number'] = week_number
+        context.user_data['adding_task']['open_date'] = open_date
         
-        # Вычисляем предлагаемый дедлайн
-        if week_number:
-            current_year = datetime.now(self.moscow_tz).year
-            jan_4 = datetime(current_year, 1, 4, tzinfo=self.moscow_tz)
-            week_start = jan_4 + timedelta(weeks=week_number - 1, days=-jan_4.weekday())
-            suggested_deadline = week_start + timedelta(days=5, hours=23, minutes=59)
-            deadline_str = suggested_deadline.strftime('%d.%m.%Y %H:%M')
-        else:
-            suggested_deadline = datetime.now(self.moscow_tz) + timedelta(days=7)
-            deadline_str = suggested_deadline.strftime('%d.%m.%Y %H:%M')
+        # Вычисляем предлагаемый дедлайн (через неделю после открытия)
+        suggested_deadline = open_date + timedelta(days=7)
+        suggested_deadline = suggested_deadline.replace(hour=23, minute=59, second=59)
+        deadline_str = suggested_deadline.strftime('%d.%m.%Y %H:%M')
         
         # Прогресс-бар
         progress = "🟢🟢🟢🟢🔘"
         
         await update.message.reply_text(
-            f"✅ **Неделя {'установлена' if week_number else 'не привязана'}!**\n"
-            f"📅 *{f'Неделя {week_number}' if week_number else 'Без привязки к неделе'}*\n\n"
+            f"✅ **Дата открытия установлена!**\n"
+            f"📅 *{open_date.strftime('%d.%m.%Y в %H:%M МСК')}*\n\n"
             f"📊 **Прогресс:** {progress} (4/5)\n\n"
             f"⏰ **Шаг 5/5:** Установите дедлайн\n"
             f"💡 *Предлагаемый дедлайн: {deadline_str}*\n\n"
@@ -847,7 +872,10 @@ class AdminBot:
         try:
             # Обработка различных вариантов ввода дедлайна
             if deadline_str in ['авто', 'auto']:
-                deadline = self._calculate_auto_deadline(context.user_data['adding_task']['week_number'])
+                # Автоматический дедлайн: через неделю после открытия
+                open_date = context.user_data['adding_task'].get('open_date', datetime.now(self.moscow_tz))
+                deadline = open_date + timedelta(days=7)
+                deadline = deadline.replace(hour=23, minute=59, second=59)
             elif deadline_str in ['завтра', 'tomorrow']:
                 deadline = datetime.now(self.moscow_tz).replace(hour=23, minute=59, second=59) + timedelta(days=1)
             elif deadline_str in ['неделя', 'week']:
@@ -873,6 +901,16 @@ class AdminBot:
                     await update.message.reply_text(
                         "❌ **Дедлайн в прошлом**\n\n"
                         "Дедлайн должен быть в будущем.\n"
+                        "Попробуйте еще раз:"
+                    )
+                    return ADDING_TASK_DEADLINE
+                
+                # Проверка, что дедлайн не раньше даты открытия
+                open_date = context.user_data['adding_task'].get('open_date')
+                if deadline and open_date and deadline <= open_date:
+                    await update.message.reply_text(
+                        "❌ **Дедлайн раньше даты открытия**\n\n"
+                        "Дедлайн должен быть позже даты открытия задания.\n"
                         "Попробуйте еще раз:"
                     )
                     return ADDING_TASK_DEADLINE
@@ -917,31 +955,25 @@ class AdminBot:
         """Генерирует предварительный просмотр задания"""
         progress = "🟢🟢🟢🟢🟢"
         
+        open_date = task_data.get('open_date', datetime.now(self.moscow_tz))
+        is_open = open_date <= datetime.now(self.moscow_tz)
+        
         preview = (
             f"📋 **ПРЕДВАРИТЕЛЬНЫЙ ПРОСМОТР ЗАДАНИЯ**\n\n"
             f"📊 **Прогресс:** {progress} (5/5) ✅\n\n"
             f"📝 **Название:**\n{task_data['title']}\n\n"
             f"📄 **Описание:**\n{task_data['description']}\n\n"
             f"🔗 **Ссылка:**\n{task_data['link'] or 'не указана'}\n\n"
-            f"📅 **Неделя:**\n{task_data['week_number'] or 'не привязана'}\n\n"
+            f"📅 **Открытие:**\n{open_date.strftime('%d.%m.%Y в %H:%M МСК')}\n\n"
             f"⏰ **Дедлайн:**\n{deadline.strftime('%d.%m.%Y в %H:%M МСК') if deadline else 'не установлен'}\n\n"
-            f"🟢 **Статус:** Открыто\n\n"
+            f"🟢 **Статус:** {'Открыто' if is_open else 'Ожидает открытия'}\n\n"
             f"🎯 **Готово к созданию!**\n"
             f"Проверьте данные и нажмите кнопку для создания задания."
         )
         
         return preview
 
-    def _calculate_auto_deadline(self, week_number: int) -> datetime:
-        """Вычисляет автоматический дедлайн для недели"""
-        if week_number:
-            current_year = datetime.now(self.moscow_tz).year
-            jan_4 = datetime(current_year, 1, 4, tzinfo=self.moscow_tz)
-            week_start = jan_4 + timedelta(weeks=week_number - 1, days=-jan_4.weekday())
-            return week_start + timedelta(days=5, hours=23, minutes=59)
-        else:
-            # Если неделя не указана, дедлайн через 7 дней
-            return datetime.now(self.moscow_tz) + timedelta(days=7, hours=23, minutes=59)
+
 
     def _validate_url(self, url: str) -> bool:
         """Валидирует URL"""
@@ -998,14 +1030,15 @@ class AdminBot:
             return ADDING_TASK_TITLE
         
         # Применяем шаблон
-        current_week = datetime.now(self.moscow_tz).isocalendar()[1]
-        template['title'] = f"{template['title']} - Неделя {current_week}"
+        current_date = datetime.now(self.moscow_tz)
+        template['title'] = f"{template['title']} - {current_date.strftime('%d.%m.%Y')}"
         
         context.user_data['adding_task'] = template.copy()
-        context.user_data['adding_task']['week_number'] = current_week
+        context.user_data['adding_task']['open_date'] = current_date
         
-        # Автоматически устанавливаем дедлайн
-        deadline = self._calculate_auto_deadline(current_week)
+        # Автоматически устанавливаем дедлайн (через неделю)
+        deadline = current_date + timedelta(days=7)
+        deadline = deadline.replace(hour=23, minute=59, second=59)
         context.user_data['adding_task']['deadline'] = deadline
         
         # Показываем предварительный просмотр
@@ -1065,7 +1098,7 @@ class AdminBot:
         with self.db._get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute('''
-                SELECT id, title, description, link, is_open, week_number, deadline
+                SELECT id, title, description, link, is_open, week_number, deadline, open_date
                 FROM tasks WHERE id = ?
             ''', (task_id,))
             task = cursor.fetchone()
@@ -1078,7 +1111,7 @@ class AdminBot:
             await query.edit_message_text("❌ Задание не найдено.")
             return
         
-        task_id, title, description, link, is_open, week_number, deadline = task
+        task_id, title, description, link, is_open, week_number, deadline, open_date = task
         
         status = "🟢 Открыто" if is_open else "📁 Архив"
         deadline_str = "не установлен"
@@ -1086,13 +1119,19 @@ class AdminBot:
             deadline_dt = datetime.fromisoformat(deadline)
             deadline_str = deadline_dt.strftime('%d.%m.%Y в %H:%M МСК')
         
+        open_date_str = "не установлена"
+        if open_date:
+            open_date_dt = datetime.fromisoformat(open_date)
+            open_date_str = open_date_dt.strftime('%d.%m.%Y в %H:%M МСК')
+        
         text = (
             f"📋 **Информация о задании**\n\n"
             f"🆔 **ID:** {task_id}\n"
             f"📝 **Название:** {title}\n"
             f"📄 **Описание:** {description or 'не указано'}\n"
             f"🔗 **Ссылка:** {link or 'не указана'}\n"
-            f"📅 **Неделя:** {week_number or 'не указана'}\n"
+            f"📅 **Дата открытия:** {open_date_str}\n"
+            f"📅 **Неделя:** {week_number or 'не указана'} *(устаревшее поле)*\n"
             f"⏰ **Дедлайн:** {deadline_str}\n"
             f"📊 **Статус:** {status}\n"
             f"📤 **Отчетов получено:** {submissions_count}"
@@ -1394,7 +1433,7 @@ class AdminBot:
         with self.db._get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute('''
-                SELECT id, title, description, link, is_open, week_number, deadline
+                SELECT id, title, description, link, is_open, week_number, deadline, open_date
                 FROM tasks WHERE id = ?
             ''', (task_id,))
             task = cursor.fetchone()
@@ -1403,7 +1442,7 @@ class AdminBot:
             await query.edit_message_text("❌ Задание не найдено.")
             return
         
-        task_id, title, description, link, is_open, week_number, deadline = task
+        task_id, title, description, link, is_open, week_number, deadline, open_date = task
         
         status = "🟢 Открыто" if is_open else "📁 Закрыто"
         deadline_str = "не установлен"
@@ -2432,7 +2471,7 @@ class AdminBot:
         with self.db._get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute("""
-                SELECT id, title, description, link, is_open, week_number, deadline
+                SELECT id, title, description, link, is_open, week_number, deadline, open_date
                 FROM tasks ORDER BY id DESC
             """)
             tasks = cursor.fetchall()
@@ -2440,7 +2479,7 @@ class AdminBot:
         with open(temp_path, 'w', newline='', encoding='utf-8') as csvfile:
             writer = csv.writer(csvfile)
             writer.writerow([
-                'ID', 'Title', 'Description', 'Link', 'Is Open', 'Week Number', 'Deadline'
+                'ID', 'Title', 'Description', 'Link', 'Is Open', 'Week Number', 'Deadline', 'Open Date'
             ])
             writer.writerows(tasks)
         
@@ -2535,7 +2574,7 @@ class AdminBot:
         with self.db._get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute('''
-                SELECT id, title, description, link, is_open, week_number, deadline
+                SELECT id, title, description, link, is_open, week_number, deadline, open_date
                 FROM tasks WHERE id = ?
             ''', (task_id,))
             task = cursor.fetchone()
@@ -2544,7 +2583,7 @@ class AdminBot:
             await query.edit_message_text("❌ Задание не найдено.")
             return
         
-        task_id, title, description, link, is_open, week_number, deadline = task
+        task_id, title, description, link, is_open, week_number, deadline, open_date = task
         
         # Получаем информацию о потенциальном отчете
         with self.db._get_connection() as conn:
@@ -3416,7 +3455,7 @@ def main():
             ADDING_TASK_TITLE: [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_bot.handle_add_task_title)],
             ADDING_TASK_DESCRIPTION: [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_bot.handle_add_task_description)],
             ADDING_TASK_LINK: [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_bot.handle_add_task_link)],
-            ADDING_TASK_WEEK: [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_bot.handle_add_task_week)],
+            ADDING_TASK_OPEN_DATE: [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_bot.handle_add_task_open_date)],
             ADDING_TASK_DEADLINE: [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_bot.handle_add_task_deadline)],
         },
         fallbacks=[CommandHandler("cancel", admin_bot.cancel_conversation)],

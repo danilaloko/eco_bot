@@ -86,6 +86,14 @@ class Database:
                 cursor.execute('ALTER TABLE submissions ADD COLUMN file_path TEXT')
                 logger.info("Добавлено поле file_path в таблицу submissions")
             
+            # Миграция: добавляем поле open_date если его нет
+            try:
+                cursor.execute('SELECT open_date FROM tasks LIMIT 1')
+            except sqlite3.OperationalError:
+                # Поле не существует, добавляем его
+                cursor.execute('ALTER TABLE tasks ADD COLUMN open_date TIMESTAMP')
+                logger.info("Добавлено поле open_date в таблицу tasks")
+            
             # Таблица обращений в поддержку
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS support_requests (
@@ -298,14 +306,17 @@ class Database:
             return cursor.fetchall()
     
     def add_task(self, title: str, description: str = None, link: str = None, 
-                 week_number: int = None, deadline: datetime = None, is_open: bool = True):
+                 week_number: int = None, deadline: datetime = None, is_open: bool = True, 
+                 open_date: datetime = None):
         """Добавляет новое задание"""
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.cursor()
             cursor.execute('''
-                INSERT INTO tasks (title, description, link, week_number, deadline, is_open)
-                VALUES (?, ?, ?, ?, ?, ?)
-            ''', (title, description, link, week_number, deadline.isoformat() if deadline else None, is_open))
+                INSERT INTO tasks (title, description, link, week_number, deadline, is_open, open_date)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            ''', (title, description, link, week_number, 
+                  deadline.isoformat() if deadline else None, is_open,
+                  open_date.isoformat() if open_date else None))
             conn.commit()
     
     def submit_task(self, user_id: int, task_id: int, submission_type: str = 'text', 

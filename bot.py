@@ -129,7 +129,48 @@ class EcoBot:
         
         # Инициализация тестовых данных
         self._init_test_data()
+        
+        # Запускаем фоновую задачу для проверки расписания открытия заданий
+        self._schedule_task_opener()
     
+    def _schedule_task_opener(self):
+        """Запускает фоновую задачу для автоматического открытия заданий"""
+        async def check_and_open_tasks():
+            """Проверяет и открывает задания по расписанию"""
+            while True:
+                try:
+                    now = datetime.now(self.moscow_tz)
+                    
+                    # Ищем задания, которые нужно открыть
+                    with sqlite3.connect(self.db.db_path) as conn:
+                        cursor = conn.cursor()
+                        cursor.execute('''
+                            SELECT id, title, open_date FROM tasks 
+                            WHERE is_open = FALSE AND open_date IS NOT NULL AND open_date <= ?
+                        ''', (now.isoformat(),))
+                        tasks_to_open = cursor.fetchall()
+                        
+                        # Открываем задания
+                        for task_id, title, open_date in tasks_to_open:
+                            cursor.execute('''
+                                UPDATE tasks SET is_open = TRUE WHERE id = ?
+                            ''', (task_id,))
+                            logger.info(f"Автоматически открыто задание: '{title}' (ID: {task_id})")
+                        
+                        if tasks_to_open:
+                            conn.commit()
+                    
+                    # Проверяем каждые 5 минут
+                    await asyncio.sleep(300)
+                    
+                except Exception as e:
+                    logger.error(f"Ошибка в планировщике заданий: {e}")
+                    await asyncio.sleep(300)  # Ждем 5 минут перед повторной попыткой
+        
+        # Запускаем задачу в фоне
+        asyncio.create_task(check_and_open_tasks())
+        logger.info("Планировщик автоматического открытия заданий запущен")
+
     def _should_show_july_21_message(self):
         """Проверяет, нужно ли показывать сообщение о первом задании 21 июля"""
         moscow_tz = pytz.timezone('Europe/Moscow')
