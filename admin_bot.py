@@ -226,6 +226,16 @@ class AdminBot:
             await self._confirm_create_task(query, context)
         elif data == "edit_task_preview":
             await self._edit_task_preview(query, context)
+        elif data == "edit_preview_title":
+            await self._start_preview_edit_title(query, context, data)
+        elif data == "edit_preview_description":
+            await self._start_preview_edit_description(query, context, data)
+        elif data == "edit_preview_link":
+            await self._start_preview_edit_link(query, context, data)
+        elif data == "edit_preview_open_date":
+            await self._start_preview_edit_open_date(query, context, data)
+        elif data == "edit_preview_deadline":
+            await self._start_preview_edit_deadline(query, context, data)
 
 
     async def _handle_template_callback(self, query, context, data):
@@ -401,11 +411,8 @@ class AdminBot:
             reply_markup=InlineKeyboardMarkup(keyboard)
         )
 
-    async def _start_preview_edit_title(self, update, context):
+    async def _start_preview_edit_title(self, query, context, data):
         """Начинает редактирование названия в предварительном просмотре"""
-        query = update.callback_query
-        await query.answer()
-        
         task_data = context.user_data.get('adding_task', {})
         current_title = task_data.get('title', '')
         
@@ -419,11 +426,8 @@ class AdminBot:
         # Переводим в состояние редактирования названия
         return ADDING_TASK_TITLE
 
-    async def _start_preview_edit_description(self, update, context):
+    async def _start_preview_edit_description(self, query, context, data):
         """Начинает редактирование описания в предварительном просмотре"""
-        query = update.callback_query
-        await query.answer()
-        
         task_data = context.user_data.get('adding_task', {})
         current_description = task_data.get('description', '')
         
@@ -437,11 +441,8 @@ class AdminBot:
         # Переводим в состояние редактирования описания
         return ADDING_TASK_DESCRIPTION
 
-    async def _start_preview_edit_link(self, update, context):
+    async def _start_preview_edit_link(self, query, context, data):
         """Начинает редактирование ссылки в предварительном просмотре"""
-        query = update.callback_query
-        await query.answer()
-        
         task_data = context.user_data.get('adding_task', {})
         current_link = task_data.get('link') or 'не указана'
         
@@ -455,11 +456,8 @@ class AdminBot:
         # Переводим в состояние редактирования ссылки
         return ADDING_TASK_LINK
 
-    async def _start_preview_edit_open_date(self, update, context):
+    async def _start_preview_edit_open_date(self, query, context, data):
         """Начинает редактирование даты открытия в предварительном просмотре"""
-        query = update.callback_query
-        await query.answer()
-        
         task_data = context.user_data.get('adding_task', {})
         current_date = task_data.get('open_date', datetime.now(self.moscow_tz))
         
@@ -476,11 +474,8 @@ class AdminBot:
         # Переводим в состояние редактирования даты открытия
         return ADDING_TASK_OPEN_DATE
 
-    async def _start_preview_edit_deadline(self, update, context):
+    async def _start_preview_edit_deadline(self, query, context, data):
         """Начинает редактирование дедлайна в предварительном просмотре"""
-        query = update.callback_query
-        await query.answer()
-        
         task_data = context.user_data.get('adding_task', {})
         current_deadline = task_data.get('deadline')
         
@@ -1726,12 +1721,45 @@ class AdminBot:
         
         return ConversationHandler.END
 
+    async def _start_edit_title(self, query, context, data):
+        """Начинает редактирование названия задания"""
+        task_id = int(data.split('_')[2])  # edit_title_123
+        
+        # Сохраняем ID задания в контекст
+        context.user_data['editing_task_id'] = task_id
+        
+        # Получаем задание
+        with self.db._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('SELECT title FROM tasks WHERE id = ?', (task_id,))
+            task = cursor.fetchone()
+        
+        if not task:
+            await query.edit_message_text("❌ Задание не найдено.")
+            return ConversationHandler.END
+        
+        current_title = task[0] or "не указано"
+        
+        text = (
+            f"✏️ **Редактирование названия задания #{task_id}**\n\n"
+            f"📝 **Текущее название:** {current_title}\n\n"
+            "Введите новое название задания:\n\n"
+            "💡 _Для отмены введите_ `/cancel`"
+        )
+        
+        keyboard = [
+            [InlineKeyboardButton("❌ Отмена", callback_data=f"task_{task_id}")]
+        ]
+        
+        await query.edit_message_text(
+            text,
+            parse_mode='Markdown',
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+        return EDITING_TASK_TITLE
+
     async def _start_edit_link(self, query, context, data):
         """Начинает редактирование ссылки задания"""
-        query = update.callback_query
-        await query.answer()
-        
-        data = query.data
         task_id = int(data.split('_')[2])  # edit_link_123
         
         # Сохраняем ID задания в контекст
@@ -3305,12 +3333,7 @@ def main():
     # ConversationHandler для добавления заданий
     add_task_handler = ConversationHandler(
         entry_points=[
-            CallbackQueryHandler(admin_bot._start_add_task_conversation, pattern="^create_manual$"),
-            CallbackQueryHandler(admin_bot._start_preview_edit_title, pattern="^edit_preview_title$"),
-            CallbackQueryHandler(admin_bot._start_preview_edit_description, pattern="^edit_preview_description$"),
-            CallbackQueryHandler(admin_bot._start_preview_edit_link, pattern="^edit_preview_link$"),
-            CallbackQueryHandler(admin_bot._start_preview_edit_open_date, pattern="^edit_preview_open_date$"),
-            CallbackQueryHandler(admin_bot._start_preview_edit_deadline, pattern="^edit_preview_deadline$")
+            CallbackQueryHandler(admin_bot._start_add_task_conversation, pattern="^create_manual$")
         ],
         states={
             ADDING_TASK_TITLE: [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_bot.handle_add_task_title)],
@@ -3321,7 +3344,7 @@ def main():
         },
         fallbacks=[CommandHandler("cancel", admin_bot.cancel_conversation)],
         name="add_task",
-        per_message=False
+        per_message=True
     )
     
     # ConversationHandler для редактирования названия задания
@@ -3332,7 +3355,7 @@ def main():
         },
         fallbacks=[CommandHandler("cancel", admin_bot.cancel_conversation)],
         name="edit_title",
-        per_message=False
+        per_message=True
     )
     
     # ConversationHandler для редактирования описания задания
@@ -3343,7 +3366,7 @@ def main():
         },
         fallbacks=[CommandHandler("cancel", admin_bot.cancel_conversation)],
         name="edit_description", 
-        per_message=False
+        per_message=True
     )
     
     # ConversationHandler для редактирования ссылки задания
@@ -3354,7 +3377,7 @@ def main():
         },
         fallbacks=[CommandHandler("cancel", admin_bot.cancel_conversation)],
         name="edit_link",
-        per_message=False
+        per_message=True
     )
     
     # ConversationHandler для редактирования даты открытия задания
@@ -3365,7 +3388,7 @@ def main():
         },
         fallbacks=[CommandHandler("cancel", admin_bot.cancel_conversation)],
         name="edit_open_date",
-        per_message=False
+        per_message=True
     )
     
     # ConversationHandler для редактирования дедлайна задания
@@ -3376,7 +3399,7 @@ def main():
         },
         fallbacks=[CommandHandler("cancel", admin_bot.cancel_conversation)],
         name="edit_deadline",
-        per_message=False
+        per_message=True
     )
     
     # Регистрируем обработчики
