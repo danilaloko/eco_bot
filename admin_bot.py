@@ -210,15 +210,20 @@ class AdminBot:
         elif data.startswith("show_potential_file_"):
             await self._show_potential_file(query, data)
         elif data.startswith("edit_title_"):
-            await self._start_edit_title(query, context, data)
+            # Эти обработчики используются в ConversationHandler
+            pass
         elif data.startswith("edit_desc_"):
-            await self._start_edit_description(query, context, data)
+            # Эти обработчики используются в ConversationHandler
+            pass
         elif data.startswith("edit_link_"):
-            await self._start_edit_link(query, context, data)
+            # Эти обработчики используются в ConversationHandler
+            pass
         elif data.startswith("edit_open_date_"):
-            await self._start_edit_open_date(query, context, data)
+            # Эти обработчики используются в ConversationHandler
+            pass
         elif data.startswith("edit_deadline_"):
-            await self._start_edit_deadline(query, context, data)
+            # Эти обработчики используются в ConversationHandler
+            pass
         # Новые обработчики для функционала добавления заданий
         elif data.startswith("template_"):
             await self._handle_template_callback(query, context, data)
@@ -1721,8 +1726,12 @@ class AdminBot:
         
         return ConversationHandler.END
 
-    async def _start_edit_title(self, query, context, data):
+    async def _start_edit_title(self, update, context):
         """Начинает редактирование названия задания"""
+        query = update.callback_query
+        await query.answer()
+        
+        data = query.data
         task_id = int(data.split('_')[2])  # edit_title_123
         
         # Сохраняем ID задания в контекст
@@ -1758,8 +1767,12 @@ class AdminBot:
         )
         return EDITING_TASK_TITLE
 
-    async def _start_edit_link(self, query, context, data):
+    async def _start_edit_link(self, update, context):
         """Начинает редактирование ссылки задания"""
+        query = update.callback_query
+        await query.answer()
+        
+        data = query.data
         task_id = int(data.split('_')[2])  # edit_link_123
         
         # Сохраняем ID задания в контекст
@@ -2934,8 +2947,12 @@ class AdminBot:
             logger.error(f"Ошибка при обработке потенциального файла: {e}")
             await query.answer("❌ Произошла ошибка!")
 
-    async def _start_edit_open_date(self, query, context, data):
+    async def _start_edit_open_date(self, update, context):
         """Начинает редактирование даты открытия задания"""
+        query = update.callback_query
+        await query.answer()
+        
+        data = query.data
         task_id = int(data.split('_')[3])  # edit_open_date_123
         
         # Сохраняем ID задания в контекст
@@ -3080,8 +3097,12 @@ class AdminBot:
         
         return ConversationHandler.END
 
-    async def _start_edit_deadline(self, query, context, data):
+    async def _start_edit_deadline(self, update, context):
         """Начинает редактирование дедлайна задания"""
+        query = update.callback_query
+        await query.answer()
+        
+        data = query.data
         task_id = int(data.split('_')[2])  # edit_deadline_123
         
         # Сохраняем ID задания в контекст
@@ -3092,7 +3113,7 @@ class AdminBot:
             cursor = conn.cursor()
             cursor.execute('SELECT deadline, open_date FROM tasks WHERE id = ?', (task_id,))
             task = cursor.fetchone()
-        
+            
         if not task:
             await query.edit_message_text("❌ Задание не найдено.")
             return ConversationHandler.END
