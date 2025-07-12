@@ -171,6 +171,8 @@ class AdminBot:
             await self._approve_report(query, data)
         elif data.startswith("reject_"):
             await self._reject_report(query, data)
+        elif data == "edit_task_preview":
+            await self._edit_task_preview(query, context)
         elif data.startswith("edit_task_"):
             await self._start_edit_task(query, context, data)
         elif data.startswith("toggle_task_"):
@@ -393,6 +395,108 @@ class AdminBot:
             parse_mode='Markdown',
             reply_markup=InlineKeyboardMarkup(keyboard)
         )
+
+    async def _start_preview_edit_title(self, update, context):
+        """Начинает редактирование названия в предварительном просмотре"""
+        query = update.callback_query
+        await query.answer()
+        
+        task_data = context.user_data.get('adding_task', {})
+        current_title = task_data.get('title', '')
+        
+        text = (
+            "✏️ **Редактирование названия**\n\n"
+            f"📝 **Текущее название:** {current_title}\n\n"
+            "Введите новое название задания:"
+        )
+        
+        await query.edit_message_text(text, parse_mode='Markdown')
+        # Переводим в состояние редактирования названия
+        return ADDING_TASK_TITLE
+
+    async def _start_preview_edit_description(self, update, context):
+        """Начинает редактирование описания в предварительном просмотре"""
+        query = update.callback_query
+        await query.answer()
+        
+        task_data = context.user_data.get('adding_task', {})
+        current_description = task_data.get('description', '')
+        
+        text = (
+            "✏️ **Редактирование описания**\n\n"
+            f"📄 **Текущее описание:** {current_description[:200]}{'...' if len(current_description) > 200 else ''}\n\n"
+            "Введите новое описание задания:"
+        )
+        
+        await query.edit_message_text(text, parse_mode='Markdown')
+        # Переводим в состояние редактирования описания
+        return ADDING_TASK_DESCRIPTION
+
+    async def _start_preview_edit_link(self, update, context):
+        """Начинает редактирование ссылки в предварительном просмотре"""
+        query = update.callback_query
+        await query.answer()
+        
+        task_data = context.user_data.get('adding_task', {})
+        current_link = task_data.get('link') or 'не указана'
+        
+        text = (
+            "✏️ **Редактирование ссылки**\n\n"
+            f"🔗 **Текущая ссылка:** {current_link}\n\n"
+            "Введите новую ссылку или 'нет' чтобы убрать:"
+        )
+        
+        await query.edit_message_text(text, parse_mode='Markdown')
+        # Переводим в состояние редактирования ссылки
+        return ADDING_TASK_LINK
+
+    async def _start_preview_edit_open_date(self, update, context):
+        """Начинает редактирование даты открытия в предварительном просмотре"""
+        query = update.callback_query
+        await query.answer()
+        
+        task_data = context.user_data.get('adding_task', {})
+        current_date = task_data.get('open_date', datetime.now(self.moscow_tz))
+        
+        text = (
+            "✏️ **Редактирование даты открытия**\n\n"
+            f"📅 **Текущая дата:** {current_date.strftime('%d.%m.%Y в %H:%M МСК')}\n\n"
+            "Введите новую дату открытия:\n"
+            "• `сейчас` - открыть сейчас\n"
+            "• `завтра` - завтра в 09:00\n"
+            "• `ДД.ММ.ГГГГ ЧЧ:ММ` - конкретная дата"
+        )
+        
+        await query.edit_message_text(text, parse_mode='Markdown')
+        # Переводим в состояние редактирования даты открытия
+        return ADDING_TASK_OPEN_DATE
+
+    async def _start_preview_edit_deadline(self, update, context):
+        """Начинает редактирование дедлайна в предварительном просмотре"""
+        query = update.callback_query
+        await query.answer()
+        
+        task_data = context.user_data.get('adding_task', {})
+        current_deadline = task_data.get('deadline')
+        
+        if current_deadline:
+            deadline_str = current_deadline.strftime('%d.%m.%Y в %H:%M МСК')
+        else:
+            deadline_str = 'не установлен'
+        
+        text = (
+            "✏️ **Редактирование дедлайна**\n\n"
+            f"⏰ **Текущий дедлайн:** {deadline_str}\n\n"
+            "Введите новый дедлайн:\n"
+            "• `авто` - автоматический расчет\n"
+            "• `завтра` - завтра в 23:59\n"
+            "• `ДД.ММ.ГГГГ ЧЧ:ММ` - конкретная дата\n"
+            "• `нет` - без дедлайна"
+        )
+        
+        await query.edit_message_text(text, parse_mode='Markdown')
+        # Переводим в состояние редактирования дедлайна
+        return ADDING_TASK_DEADLINE
 
     async def _show_main_menu(self, query):
         """Показывает главное меню"""
@@ -3450,7 +3554,14 @@ def main():
     
     # ConversationHandler для добавления заданий
     add_task_handler = ConversationHandler(
-        entry_points=[CallbackQueryHandler(admin_bot._start_add_task_conversation, pattern="^create_manual$")],
+        entry_points=[
+            CallbackQueryHandler(admin_bot._start_add_task_conversation, pattern="^create_manual$"),
+            CallbackQueryHandler(admin_bot._start_preview_edit_title, pattern="^edit_preview_title$"),
+            CallbackQueryHandler(admin_bot._start_preview_edit_description, pattern="^edit_preview_description$"),
+            CallbackQueryHandler(admin_bot._start_preview_edit_link, pattern="^edit_preview_link$"),
+            CallbackQueryHandler(admin_bot._start_preview_edit_open_date, pattern="^edit_preview_open_date$"),
+            CallbackQueryHandler(admin_bot._start_preview_edit_deadline, pattern="^edit_preview_deadline$")
+        ],
         states={
             ADDING_TASK_TITLE: [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_bot.handle_add_task_title)],
             ADDING_TASK_DESCRIPTION: [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_bot.handle_add_task_description)],
