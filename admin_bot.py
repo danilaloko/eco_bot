@@ -212,6 +212,178 @@ class AdminBot:
             await self._start_edit_description(query, context, data)
         elif data.startswith("edit_link_"):
             await self._start_edit_link(query, context, data)
+        # Новые обработчики для функционала добавления заданий
+        elif data.startswith("template_"):
+            await self._handle_template_callback(query, context, data)
+        elif data == "confirm_create_task":
+            await self._confirm_create_task(query, context)
+        elif data == "edit_task_preview":
+            await self._edit_task_preview(query, context)
+
+    async def _handle_template_callback(self, query, context, data):
+        """Обрабатывает выбор шаблона через callback"""
+        template_type = data.replace('template_', '')
+        
+        # Применяем шаблон
+        templates = {
+            'observation': {
+                'title': 'Экологическое наблюдение',
+                'description': 'Проведите наблюдение за природой в вашем районе. Сфотографируйте интересные природные объекты и поделитесь своими наблюдениями.',
+                'link': None
+            },
+            'action': {
+                'title': 'Экологическое действие',
+                'description': 'Совершите одно полезное действие для окружающей среды. Это может быть уборка территории, посадка растений или сортировка отходов.',
+                'link': None
+            },
+            'research': {
+                'title': 'Исследование природы',
+                'description': 'Проведите небольшое исследование природного объекта в вашем районе. Изучите его особенности и поделитесь результатами.',
+                'link': None
+            }
+        }
+        
+        template = templates.get(template_type)
+        if not template:
+            await query.edit_message_text("❌ Неизвестный шаблон!")
+            return
+        
+        # Применяем шаблон
+        current_week = datetime.now(self.moscow_tz).isocalendar()[1]
+        template['title'] = f"{template['title']} - Неделя {current_week}"
+        
+        context.user_data['adding_task'] = template.copy()
+        context.user_data['adding_task']['week_number'] = current_week
+        
+        # Автоматически устанавливаем дедлайн
+        deadline = self._calculate_auto_deadline(current_week)
+        context.user_data['adding_task']['deadline'] = deadline
+        
+        # Показываем предварительный просмотр
+        preview_text = self._generate_task_preview(context.user_data['adding_task'], deadline)
+        
+        keyboard = [
+            [InlineKeyboardButton("✅ Создать задание", callback_data="confirm_create_task")],
+            [InlineKeyboardButton("✏️ Изменить", callback_data="edit_task_preview")],
+            [InlineKeyboardButton("❌ Отменить", callback_data="tasks_menu")]
+        ]
+        
+        await query.edit_message_text(
+            f"🎯 **Шаблон '{template_type}' применен!**\n\n{preview_text}",
+            parse_mode='Markdown',
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+
+    async def _confirm_create_task(self, query, context):
+        """Подтверждает создание задания"""
+        task_data = context.user_data.get('adding_task', {})
+        
+        if not task_data:
+            await query.edit_message_text("❌ Данные задания не найдены. Начните заново.")
+            return
+        
+        try:
+            # Создаем задание в базе данных
+            self.db.add_task(
+                title=task_data['title'],
+                description=task_data['description'],
+                link=task_data['link'],
+                week_number=task_data['week_number'],
+                deadline=task_data['deadline'],
+                is_open=True
+            )
+            
+            # Получаем ID созданного задания
+            with self.db._get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute('SELECT id FROM tasks WHERE title = ? ORDER BY id DESC LIMIT 1', (task_data['title'],))
+                task_id = cursor.fetchone()[0]
+            
+            success_text = (
+                "✅ **ЗАДАНИЕ УСПЕШНО СОЗДАНО!**\n\n"
+                f"🆔 **ID задания:** {task_id}\n"
+                f"📝 **Название:** {task_data['title']}\n"
+                f"📄 **Описание:** {task_data['description'][:100]}{'...' if len(task_data['description']) > 100 else ''}\n"
+                f"🔗 **Ссылка:** {task_data['link'] or 'не указана'}\n"
+                f"📅 **Неделя:** {task_data['week_number'] or 'не привязана'}\n"
+                f"⏰ **Дедлайн:** {task_data['deadline'].strftime('%d.%m.%Y в %H:%M МСК') if task_data['deadline'] else 'не установлен'}\n"
+                f"🟢 **Статус:** Открыто\n\n"
+                f"🎉 **Задание доступно пользователям!**"
+            )
+            
+            keyboard = [
+                [InlineKeyboardButton("➕ Создать еще задание", callback_data="add_task")],
+                [InlineKeyboardButton("📋 Посмотреть задание", callback_data=f"task_{task_id}")],
+                [InlineKeyboardButton("📝 Список заданий", callback_data="list_tasks")],
+                [InlineKeyboardButton("🏠 Главное меню", callback_data="main_menu")]
+            ]
+            
+            await query.edit_message_text(
+                success_text,
+                parse_mode='Markdown',
+                reply_markup=InlineKeyboardMarkup(keyboard)
+            )
+            
+            # Очищаем данные
+            context.user_data.clear()
+            
+            # Логируем успешное создание
+            logger.info(f"Создано новое задание: '{task_data['title']}' (ID: {task_id})")
+            
+        except Exception as e:
+            logger.error(f"Ошибка при создании задания: {e}")
+            
+            error_text = (
+                "❌ **ОШИБКА ПРИ СОЗДАНИИ ЗАДАНИЯ**\n\n"
+                f"Произошла ошибка: {str(e)}\n\n"
+                "Попробуйте еще раз или обратитесь к разработчику."
+            )
+            
+            keyboard = [
+                [InlineKeyboardButton("🔄 Попробовать снова", callback_data="confirm_create_task")],
+                [InlineKeyboardButton("✏️ Изменить данные", callback_data="edit_task_preview")],
+                [InlineKeyboardButton("❌ Отменить", callback_data="tasks_menu")]
+            ]
+            
+            await query.edit_message_text(
+                error_text,
+                parse_mode='Markdown',
+                reply_markup=InlineKeyboardMarkup(keyboard)
+            )
+
+    async def _edit_task_preview(self, query, context):
+        """Позволяет редактировать данные задания перед созданием"""
+        task_data = context.user_data.get('adding_task', {})
+        
+        if not task_data:
+            await query.edit_message_text("❌ Данные задания не найдены. Начните заново.")
+            return
+        
+        text = (
+            "✏️ **РЕДАКТИРОВАНИЕ ЗАДАНИЯ**\n\n"
+            f"📝 **Название:** {task_data['title']}\n"
+            f"📄 **Описание:** {task_data['description'][:100]}{'...' if len(task_data['description']) > 100 else ''}\n"
+            f"🔗 **Ссылка:** {task_data['link'] or 'не указана'}\n"
+            f"📅 **Неделя:** {task_data['week_number'] or 'не привязана'}\n"
+            f"⏰ **Дедлайн:** {task_data['deadline'].strftime('%d.%m.%Y в %H:%M МСК') if task_data['deadline'] else 'не установлен'}\n\n"
+            f"Что хотите изменить?"
+        )
+        
+        keyboard = [
+            [InlineKeyboardButton("📝 Название", callback_data="edit_preview_title")],
+            [InlineKeyboardButton("📄 Описание", callback_data="edit_preview_description")],
+            [InlineKeyboardButton("🔗 Ссылку", callback_data="edit_preview_link")],
+            [InlineKeyboardButton("📅 Неделю", callback_data="edit_preview_week")],
+            [InlineKeyboardButton("⏰ Дедлайн", callback_data="edit_preview_deadline")],
+            [InlineKeyboardButton("✅ Готово, создать", callback_data="confirm_create_task")],
+            [InlineKeyboardButton("❌ Отменить", callback_data="tasks_menu")]
+        ]
+        
+        await query.edit_message_text(
+            text,
+            parse_mode='Markdown',
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
 
     async def _show_main_menu(self, query):
         """Показывает главное меню"""
@@ -377,13 +549,28 @@ class AdminBot:
         """Начинает процесс добавления задания"""
         context.user_data['adding_task'] = {}
         
+        # Получаем текущую неделю для подсказки
+        current_week = datetime.now(self.moscow_tz).isocalendar()[1]
+        
         text = (
             "➕ **Добавление нового задания**\n\n"
-            "Введите название задания:\n\n"
-            "💡 _Для отмены введите_ `/cancel`"
+            "🚀 **Быстрый старт:**\n"
+            "• Используйте шаблоны для типовых заданий\n"
+            "• Автоматический расчет дедлайнов\n"
+            "• Предварительный просмотр перед созданием\n\n"
+            "📝 **Шаг 1/5:** Введите название задания\n"
+            "💡 *Минимум 5 символов, максимум 100*\n\n"
+            "⚡ **Быстрые шаблоны:**\n"
+            "• `/template_observation` - Экологическое наблюдение\n"
+            "• `/template_action` - Экологическое действие\n"
+            "• `/template_research` - Исследование природы\n\n"
+            "🔧 *Для отмены введите* `/cancel`"
         )
         
         keyboard = [
+            [InlineKeyboardButton("🎯 Шаблон: Наблюдение", callback_data="template_observation")],
+            [InlineKeyboardButton("🌱 Шаблон: Действие", callback_data="template_action")],
+            [InlineKeyboardButton("🔬 Шаблон: Исследование", callback_data="template_research")],
             [InlineKeyboardButton("❌ Отмена", callback_data="tasks_menu")]
         ]
         
@@ -400,18 +587,52 @@ class AdminBot:
             return ConversationHandler.END
         
         title = update.message.text.strip()
+        
+        # Проверка на команды шаблонов
+        if title.startswith('/template_'):
+            template_type = title.replace('/template_', '')
+            return await self._apply_task_template(update, context, template_type)
+        
+        # Валидация названия
         if len(title) < 5:
             await update.message.reply_text(
-                "❌ Название задания должно содержать минимум 5 символов.\n"
-                "Попробуйте еще раз:"
+                "❌ **Название слишком короткое**\n\n"
+                "Название задания должно содержать минимум 5 символов.\n"
+                "Попробуйте еще раз или используйте шаблон:"
+            )
+            return ADDING_TASK_TITLE
+        
+        if len(title) > 100:
+            await update.message.reply_text(
+                "❌ **Название слишком длинное**\n\n"
+                "Название задания не должно превышать 100 символов.\n"
+                "Попробуйте сократить:"
+            )
+            return ADDING_TASK_TITLE
+        
+        # Проверка на дублирование
+        if self._check_task_title_exists(title):
+            await update.message.reply_text(
+                "⚠️ **Задание с таким названием уже существует**\n\n"
+                "Измените название или добавьте уточнение (например, номер недели):"
             )
             return ADDING_TASK_TITLE
         
         context.user_data['adding_task']['title'] = title
         
+        # Прогресс-бар
+        progress = "🟢🔘🔘🔘🔘"
+        
         await update.message.reply_text(
-            f"✅ Название: {title}\n\n"
-            "Теперь введите описание задания:"
+            f"✅ **Название принято!**\n"
+            f"📝 *{title}*\n\n"
+            f"📊 **Прогресс:** {progress} (1/5)\n\n"
+            f"📄 **Шаг 2/5:** Введите описание задания\n"
+            f"💡 *Опишите, что должны сделать участники*\n\n"
+            f"📋 **Примеры хорошего описания:**\n"
+            f"• Сфотографируйте 3 вида растений в вашем районе\n"
+            f"• Проведите уборку территории площадью 100 кв.м\n"
+            f"• Измерьте температуру воды в ближайшем водоеме"
         )
         return ADDING_TASK_DESCRIPTION
 
@@ -421,11 +642,40 @@ class AdminBot:
             return ConversationHandler.END
         
         description = update.message.text.strip()
+        
+        # Валидация описания
+        if len(description) < 10:
+            await update.message.reply_text(
+                "❌ **Описание слишком короткое**\n\n"
+                "Описание должно содержать минимум 10 символов.\n"
+                "Добавьте больше деталей о том, что нужно сделать:"
+            )
+            return ADDING_TASK_DESCRIPTION
+        
+        if len(description) > 1000:
+            await update.message.reply_text(
+                "❌ **Описание слишком длинное**\n\n"
+                "Описание не должно превышать 1000 символов.\n"
+                "Попробуйте сократить, оставив только самое важное:"
+            )
+            return ADDING_TASK_DESCRIPTION
+        
         context.user_data['adding_task']['description'] = description
         
+        # Прогресс-бар
+        progress = "🟢🟢🔘🔘🔘"
+        
         await update.message.reply_text(
-            f"✅ Описание: {description}\n\n"
-            "Введите ссылку на задание (или напишите 'нет' если ссылки нет):"
+            f"✅ **Описание принято!**\n"
+            f"📄 *{description[:100]}{'...' if len(description) > 100 else ''}*\n\n"
+            f"📊 **Прогресс:** {progress} (2/5)\n\n"
+            f"🔗 **Шаг 3/5:** Введите ссылку на задание\n"
+            f"💡 *Необязательно - для дополнительных материалов*\n\n"
+            f"📋 **Варианты ввода:**\n"
+            f"• Полная ссылка: `https://example.com/task`\n"
+            f"• Без ссылки: `нет`, `no`, `-` или `пропустить`\n"
+            f"• Telegram канал: `@channel_name`",
+            parse_mode='Markdown'
         )
         return ADDING_TASK_LINK
 
@@ -435,17 +685,44 @@ class AdminBot:
             return ConversationHandler.END
         
         link = update.message.text.strip()
-        if link.lower() in ['нет', 'no', '-']:
+        
+        # Обработка отсутствия ссылки
+        if link.lower() in ['нет', 'no', '-', 'пропустить', 'skip']:
             link = None
+        else:
+            # Валидация ссылки
+            if not self._validate_url(link):
+                await update.message.reply_text(
+                    "❌ **Некорректная ссылка**\n\n"
+                    "Ссылка должна начинаться с `http://`, `https://` или `@` (для Telegram)\n\n"
+                    "📋 **Примеры корректных ссылок:**\n"
+                    "• `https://example.com/task`\n"
+                    "• `@eco_channel`\n"
+                    "• `https://t.me/eco_channel`\n\n"
+                    "Или введите `нет` если ссылка не нужна:",
+                    parse_mode='Markdown'
+                )
+                return ADDING_TASK_LINK
         
         context.user_data['adding_task']['link'] = link
         
         # Получаем текущий номер недели
         current_week = datetime.now(self.moscow_tz).isocalendar()[1]
         
+        # Прогресс-бар
+        progress = "🟢🟢🟢🔘🔘"
+        
         await update.message.reply_text(
-            f"✅ Ссылка: {link or 'не указана'}\n\n"
-            f"Введите номер недели для задания (текущая неделя: {current_week}):"
+            f"✅ **Ссылка {'добавлена' if link else 'пропущена'}!**\n"
+            f"🔗 *{link or 'не указана'}*\n\n"
+            f"📊 **Прогресс:** {progress} (3/5)\n\n"
+            f"📅 **Шаг 4/5:** Введите номер недели\n"
+            f"💡 *Текущая неделя: {current_week}*\n\n"
+            f"📋 **Варианты ввода:**\n"
+            f"• Номер недели: `1` - `53`\n"
+            f"• Текущая неделя: `текущая` или `current`\n"
+            f"• Следующая неделя: `следующая` или `next`\n"
+            f"• Без привязки к неделе: `нет` или `no`"
         )
         return ADDING_TASK_WEEK
 
@@ -454,28 +731,59 @@ class AdminBot:
         if not await self._check_admin_access(update):
             return ConversationHandler.END
         
-        try:
-            week_number = int(update.message.text.strip())
-            if week_number < 1 or week_number > 53:
-                raise ValueError()
-        except ValueError:
-            await update.message.reply_text(
-                "❌ Введите корректный номер недели (1-53):"
-            )
-            return ADDING_TASK_WEEK
+        week_input = update.message.text.strip().lower()
+        current_week = datetime.now(self.moscow_tz).isocalendar()[1]
+        
+        # Обработка различных вариантов ввода
+        if week_input in ['текущая', 'current']:
+            week_number = current_week
+        elif week_input in ['следующая', 'next']:
+            week_number = current_week + 1 if current_week < 53 else 1
+        elif week_input in ['нет', 'no', '-']:
+            week_number = None
+        else:
+            try:
+                week_number = int(week_input)
+                if week_number < 1 or week_number > 53:
+                    raise ValueError()
+            except ValueError:
+                await update.message.reply_text(
+                    "❌ **Некорректный номер недели**\n\n"
+                    "Введите число от 1 до 53 или используйте ключевые слова:\n"
+                    "• `текущая` - текущая неделя\n"
+                    "• `следующая` - следующая неделя\n"
+                    "• `нет` - без привязки к неделе"
+                )
+                return ADDING_TASK_WEEK
         
         context.user_data['adding_task']['week_number'] = week_number
         
-        # Вычисляем предлагаемый дедлайн (суббота недели в 23:59)
-        current_year = datetime.now(self.moscow_tz).year
-        jan_4 = datetime(current_year, 1, 4, tzinfo=self.moscow_tz)
-        week_start = jan_4 + timedelta(weeks=week_number - 1, days=-jan_4.weekday())
-        suggested_deadline = week_start + timedelta(days=5, hours=23, minutes=59)
+        # Вычисляем предлагаемый дедлайн
+        if week_number:
+            current_year = datetime.now(self.moscow_tz).year
+            jan_4 = datetime(current_year, 1, 4, tzinfo=self.moscow_tz)
+            week_start = jan_4 + timedelta(weeks=week_number - 1, days=-jan_4.weekday())
+            suggested_deadline = week_start + timedelta(days=5, hours=23, minutes=59)
+            deadline_str = suggested_deadline.strftime('%d.%m.%Y %H:%M')
+        else:
+            suggested_deadline = datetime.now(self.moscow_tz) + timedelta(days=7)
+            deadline_str = suggested_deadline.strftime('%d.%m.%Y %H:%M')
+        
+        # Прогресс-бар
+        progress = "🟢🟢🟢🟢🔘"
         
         await update.message.reply_text(
-            f"✅ Неделя: {week_number}\n\n"
-            f"Введите дедлайн в формате 'ДД.ММ.ГГГГ ЧЧ:ММ' или 'авто' для автоматического дедлайна:\n"
-            f"Предлагаемый дедлайн: {suggested_deadline.strftime('%d.%m.%Y %H:%M')}"
+            f"✅ **Неделя {'установлена' if week_number else 'не привязана'}!**\n"
+            f"📅 *{f'Неделя {week_number}' if week_number else 'Без привязки к неделе'}*\n\n"
+            f"📊 **Прогресс:** {progress} (4/5)\n\n"
+            f"⏰ **Шаг 5/5:** Установите дедлайн\n"
+            f"💡 *Предлагаемый дедлайн: {deadline_str}*\n\n"
+            f"📋 **Варианты ввода:**\n"
+            f"• Автоматический: `авто` или `auto`\n"
+            f"• Ручной ввод: `ДД.ММ.ГГГГ ЧЧ:ММ`\n"
+            f"• Завтра в 23:59: `завтра`\n"
+            f"• Через неделю: `неделя`\n"
+            f"• Без дедлайна: `нет`"
         )
         return ADDING_TASK_DEADLINE
 
@@ -484,72 +792,188 @@ class AdminBot:
         if not await self._check_admin_access(update):
             return ConversationHandler.END
         
-        deadline_str = update.message.text.strip()
+        deadline_str = update.message.text.strip().lower()
         
         try:
-            if deadline_str.lower() == 'авто':
-                # Автоматический дедлайн
-                week_number = context.user_data['adding_task']['week_number']
-                current_year = datetime.now(self.moscow_tz).year
-                jan_4 = datetime(current_year, 1, 4, tzinfo=self.moscow_tz)
-                week_start = jan_4 + timedelta(weeks=week_number - 1, days=-jan_4.weekday())
-                deadline = week_start + timedelta(days=5, hours=23, minutes=59)
+            # Обработка различных вариантов ввода дедлайна
+            if deadline_str in ['авто', 'auto']:
+                deadline = self._calculate_auto_deadline(context.user_data['adding_task']['week_number'])
+            elif deadline_str in ['завтра', 'tomorrow']:
+                deadline = datetime.now(self.moscow_tz).replace(hour=23, minute=59, second=59) + timedelta(days=1)
+            elif deadline_str in ['неделя', 'week']:
+                deadline = datetime.now(self.moscow_tz) + timedelta(weeks=1)
+                deadline = deadline.replace(hour=23, minute=59, second=59)
+            elif deadline_str in ['нет', 'no', '-']:
+                deadline = None
             else:
-                # Ручной ввод дедлайна
-                deadline = datetime.strptime(deadline_str, '%d.%m.%Y %H:%M')
-                deadline = self.moscow_tz.localize(deadline)
-        except ValueError:
+                # Попытка парсинга ручного ввода
+                try:
+                    deadline = datetime.strptime(deadline_str, '%d.%m.%Y %H:%M')
+                    deadline = self.moscow_tz.localize(deadline)
+                except ValueError:
+                    # Пробуем другие форматы
+                    try:
+                        deadline = datetime.strptime(deadline_str, '%d.%m.%Y')
+                        deadline = self.moscow_tz.localize(deadline.replace(hour=23, minute=59))
+                    except ValueError:
+                        raise ValueError("Неверный формат даты")
+                
+                # Проверка, что дедлайн в будущем
+                if deadline and deadline <= datetime.now(self.moscow_tz):
+                    await update.message.reply_text(
+                        "❌ **Дедлайн в прошлом**\n\n"
+                        "Дедлайн должен быть в будущем.\n"
+                        "Попробуйте еще раз:"
+                    )
+                    return ADDING_TASK_DEADLINE
+                    
+        except ValueError as e:
             await update.message.reply_text(
-                "❌ Неверный формат даты. Используйте 'ДД.МММ.ГГГГ ЧЧ:ММ' или 'авто':"
+                "❌ **Неверный формат даты**\n\n"
+                "Используйте один из форматов:\n"
+                "• `ДД.ММ.ГГГГ ЧЧ:ММ` (например: 25.12.2024 23:59)\n"
+                "• `ДД.ММ.ГГГГ` (время установится 23:59)\n"
+                "• `авто` - автоматический расчет\n"
+                "• `завтра` - завтра в 23:59\n"
+                "• `неделя` - через неделю\n"
+                "• `нет` - без дедлайна"
             )
             return ADDING_TASK_DEADLINE
         
         # Создаем задание
         task_data = context.user_data['adding_task']
         
-        try:
-            self.db.add_task(
-                title=task_data['title'],
-                description=task_data['description'],
-                link=task_data['link'],
-                week_number=task_data['week_number'],
-                deadline=deadline,
-                is_open=True
-            )
-            
-            success_text = (
-                "✅ **Задание успешно создано!**\n\n"
-                f"📝 **Название:** {task_data['title']}\n"
-                f"📄 **Описание:** {task_data['description']}\n"
-                f"🔗 **Ссылка:** {task_data['link'] or 'не указана'}\n"
-                f"📅 **Неделя:** {task_data['week_number']}\n"
-                f"⏰ **Дедлайн:** {deadline.strftime('%d.%m.%Y в %H:%M МСК')}\n"
-                f"🟢 **Статус:** Открыто"
-            )
-            
-            keyboard = [
-                [InlineKeyboardButton("➕ Добавить еще", callback_data="add_task")],
-                [InlineKeyboardButton("📝 Список заданий", callback_data="list_tasks")],
-                [InlineKeyboardButton("🏠 Главное меню", callback_data="main_menu")]
-            ]
-            
-            await update.message.reply_text(
-                success_text,
-                parse_mode='Markdown',
-                reply_markup=InlineKeyboardMarkup(keyboard)
-            )
-            
-            # Очищаем данные
-            context.user_data.clear()
-            
-        except Exception as e:
-            logger.error(f"Ошибка при создании задания: {e}")
-            await update.message.reply_text(
-                f"❌ Ошибка при создании задания: {str(e)}\n\n"
-                "Попробуйте еще раз или обратитесь к разработчику."
-            )
+        # Показываем предварительный просмотр
+        preview_text = self._generate_task_preview(task_data, deadline)
         
-        return ConversationHandler.END
+        keyboard = [
+            [InlineKeyboardButton("✅ Создать задание", callback_data="confirm_create_task")],
+            [InlineKeyboardButton("✏️ Изменить", callback_data="edit_task_preview")],
+            [InlineKeyboardButton("❌ Отменить", callback_data="tasks_menu")]
+        ]
+        
+        # Сохраняем дедлайн для подтверждения
+        context.user_data['adding_task']['deadline'] = deadline
+        
+        await update.message.reply_text(
+            preview_text,
+            parse_mode='Markdown',
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+        
+        return ADDING_TASK_DEADLINE
+
+    def _generate_task_preview(self, task_data: dict, deadline: datetime) -> str:
+        """Генерирует предварительный просмотр задания"""
+        progress = "🟢🟢🟢🟢🟢"
+        
+        preview = (
+            f"📋 **ПРЕДВАРИТЕЛЬНЫЙ ПРОСМОТР ЗАДАНИЯ**\n\n"
+            f"📊 **Прогресс:** {progress} (5/5) ✅\n\n"
+            f"📝 **Название:**\n{task_data['title']}\n\n"
+            f"📄 **Описание:**\n{task_data['description']}\n\n"
+            f"🔗 **Ссылка:**\n{task_data['link'] or 'не указана'}\n\n"
+            f"📅 **Неделя:**\n{task_data['week_number'] or 'не привязана'}\n\n"
+            f"⏰ **Дедлайн:**\n{deadline.strftime('%d.%m.%Y в %H:%M МСК') if deadline else 'не установлен'}\n\n"
+            f"🟢 **Статус:** Открыто\n\n"
+            f"🎯 **Готово к созданию!**\n"
+            f"Проверьте данные и нажмите кнопку для создания задания."
+        )
+        
+        return preview
+
+    def _calculate_auto_deadline(self, week_number: int) -> datetime:
+        """Вычисляет автоматический дедлайн для недели"""
+        if week_number:
+            current_year = datetime.now(self.moscow_tz).year
+            jan_4 = datetime(current_year, 1, 4, tzinfo=self.moscow_tz)
+            week_start = jan_4 + timedelta(weeks=week_number - 1, days=-jan_4.weekday())
+            return week_start + timedelta(days=5, hours=23, minutes=59)
+        else:
+            # Если неделя не указана, дедлайн через 7 дней
+            return datetime.now(self.moscow_tz) + timedelta(days=7, hours=23, minutes=59)
+
+    def _validate_url(self, url: str) -> bool:
+        """Валидирует URL"""
+        if not url:
+            return False
+        
+        # Проверка на Telegram каналы/боты
+        if url.startswith('@'):
+            return len(url) > 1
+        
+        # Проверка на HTTP/HTTPS
+        if url.startswith(('http://', 'https://')):
+            return True
+        
+        # Проверка на t.me ссылки
+        if url.startswith('t.me/'):
+            return True
+        
+        return False
+
+    def _check_task_title_exists(self, title: str) -> bool:
+        """Проверяет, существует ли задание с таким названием"""
+        try:
+            with self.db._get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute('SELECT id FROM tasks WHERE title = ?', (title,))
+                return cursor.fetchone() is not None
+        except Exception:
+            return False
+
+    async def _apply_task_template(self, update: Update, context: ContextTypes.DEFAULT_TYPE, template_type: str):
+        """Применяет шаблон задания"""
+        templates = {
+            'observation': {
+                'title': 'Экологическое наблюдение',
+                'description': 'Проведите наблюдение за природой в вашем районе. Сфотографируйте интересные природные объекты и поделитесь своими наблюдениями.',
+                'link': None
+            },
+            'action': {
+                'title': 'Экологическое действие',
+                'description': 'Совершите одно полезное действие для окружающей среды. Это может быть уборка территории, посадка растений или сортировка отходов.',
+                'link': None
+            },
+            'research': {
+                'title': 'Исследование природы',
+                'description': 'Проведите небольшое исследование природного объекта в вашем районе. Изучите его особенности и поделитесь результатами.',
+                'link': None
+            }
+        }
+        
+        template = templates.get(template_type)
+        if not template:
+            await update.message.reply_text("❌ Неизвестный шаблон!")
+            return ADDING_TASK_TITLE
+        
+        # Применяем шаблон
+        current_week = datetime.now(self.moscow_tz).isocalendar()[1]
+        template['title'] = f"{template['title']} - Неделя {current_week}"
+        
+        context.user_data['adding_task'] = template.copy()
+        context.user_data['adding_task']['week_number'] = current_week
+        
+        # Автоматически устанавливаем дедлайн
+        deadline = self._calculate_auto_deadline(current_week)
+        context.user_data['adding_task']['deadline'] = deadline
+        
+        # Показываем предварительный просмотр
+        preview_text = self._generate_task_preview(context.user_data['adding_task'], deadline)
+        
+        keyboard = [
+            [InlineKeyboardButton("✅ Создать задание", callback_data="confirm_create_task")],
+            [InlineKeyboardButton("✏️ Изменить", callback_data="edit_task_preview")],
+            [InlineKeyboardButton("❌ Отменить", callback_data="tasks_menu")]
+        ]
+        
+        await update.message.reply_text(
+            f"🎯 **Шаблон '{template_type}' применен!**\n\n{preview_text}",
+            parse_mode='Markdown',
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+        
+        return ADDING_TASK_DEADLINE
 
     async def _show_tasks_list(self, query):
         """Показывает список всех заданий"""
