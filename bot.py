@@ -130,11 +130,14 @@ class EcoBot:
         # Инициализация тестовых данных
         self._init_test_data()
         
-        # Запускаем фоновую задачу для проверки расписания открытия заданий
-        self._schedule_task_opener()
+        # Флаг для отслеживания запуска планировщика
+        self._scheduler_started = False
     
     def _schedule_task_opener(self):
         """Запускает фоновую задачу для автоматического открытия заданий"""
+        if self._scheduler_started:
+            return
+        
         async def check_and_open_tasks():
             """Проверяет и открывает задания по расписанию"""
             while True:
@@ -167,9 +170,14 @@ class EcoBot:
                     logger.error(f"Ошибка в планировщике заданий: {e}")
                     await asyncio.sleep(300)  # Ждем 5 минут перед повторной попыткой
         
-        # Запускаем задачу в фоне
-        asyncio.create_task(check_and_open_tasks())
-        logger.info("Планировщик автоматического открытия заданий запущен")
+        try:
+            # Запускаем задачу в фоне
+            asyncio.create_task(check_and_open_tasks())
+            self._scheduler_started = True
+            logger.info("Планировщик автоматического открытия заданий запущен")
+        except RuntimeError:
+            # Event loop еще не запущен, попробуем позже
+            logger.info("Event loop не готов, планировщик будет запущен позже")
 
     def _should_show_july_21_message(self):
         """Проверяет, нужно ли показывать сообщение о первом задании 21 июля"""
@@ -197,6 +205,9 @@ class EcoBot:
         """Обработчик команды /start"""
         user = update.effective_user
         user_id = user.id
+        
+        # Запускаем планировщик при первом запуске
+        self._schedule_task_opener()
         
         # СНАЧАЛА проверяем, есть ли пользователь в базе и завершена ли регистрация
         user_data = self.db.get_user(user_id)
@@ -774,6 +785,9 @@ class EcoBot:
     async def handle_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Обработчик текстовых сообщений"""
         user_id = update.effective_user.id
+        
+        # Запускаем планировщик при первом сообщении
+        self._schedule_task_opener()
         
         # Проверяем регистрацию
         if not self.db.is_user_registered(user_id):
