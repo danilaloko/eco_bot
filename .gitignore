@@ -9,3 +9,7 @@ env/
 .env.production
 eco_bot.db
 .DS_Store
+__pycache__/
+uploads/
+uploaded_files/
+venv/

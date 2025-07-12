@@ -157,13 +157,18 @@ class EcoBot:
         user = update.effective_user
         user_id = user.id
         
-        # Добавляем пользователя в базу данных
-        self.db.add_user(
-            user_id,
-            user.username,
-            user.first_name,
-            user.last_name
-        )
+        # СНАЧАЛА проверяем, есть ли пользователь в базе и завершена ли регистрация
+        user_data = self.db.get_user(user_id)
+        
+        # Если пользователя нет в базе, добавляем его
+        if not user_data:
+            self.db.add_user(
+                user_id,
+                user.username,
+                user.first_name,
+                user.last_name
+            )
+            user_data = self.db.get_user(user_id)
         
         # Проверяем офлайн сообщения
         await self._process_offline_messages(update, context)
@@ -187,8 +192,6 @@ class EcoBot:
         
         # ОБЯЗАТЕЛЬНО проверяем, завершена ли регистрация пользователя
         if self.db.is_user_registered(user_id):
-            user_data = self.db.get_user(user_id)
-            
             # Дополнительная проверка: убеждаемся, что имя и фамилия действительно заполнены
             if not user_data[4] or not user_data[5]:  # first_name и last_name
                 logger.warning(f"Пользователь {user_id} помечен как зарегистрированный, но имя/фамилия не заполнены")

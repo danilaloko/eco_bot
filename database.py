@@ -24,7 +24,7 @@ class Database:
                     username TEXT,
                     telegram_first_name TEXT,
                     telegram_last_name TEXT,
-                    first_name TEXT,
+                    first_name TEXT,    
                     last_name TEXT,
                     participation_type TEXT DEFAULT 'individual',
                     family_members_count INTEGER DEFAULT 1,
@@ -195,13 +195,28 @@ class Database:
             conn.commit()
     
     def add_user(self, user_id: int, username: str = None, telegram_first_name: str = None, telegram_last_name: str = None):
-        """Добавляет нового пользователя или обновляет существующего"""
+        """Добавляет нового пользователя или обновляет только telegram-данные существующего"""
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.cursor()
-            cursor.execute('''
-                INSERT OR REPLACE INTO users (user_id, username, telegram_first_name, telegram_last_name)
-                VALUES (?, ?, ?, ?)
-            ''', (user_id, username, telegram_first_name, telegram_last_name))
+            
+            # Проверяем, существует ли пользователь
+            cursor.execute('SELECT user_id FROM users WHERE user_id = ?', (user_id,))
+            exists = cursor.fetchone()
+            
+            if exists:
+                # Пользователь существует - обновляем только telegram-данные, не трогая регистрационные поля
+                cursor.execute('''
+                    UPDATE users 
+                    SET username = ?, telegram_first_name = ?, telegram_last_name = ?
+                    WHERE user_id = ?
+                ''', (username, telegram_first_name, telegram_last_name, user_id))
+            else:
+                # Новый пользователь - создаем запись
+                cursor.execute('''
+                    INSERT INTO users (user_id, username, telegram_first_name, telegram_last_name)
+                    VALUES (?, ?, ?, ?)
+                ''', (user_id, username, telegram_first_name, telegram_last_name))
+            
             conn.commit()
     
     def update_user_registration(self, user_id: int, first_name: str, last_name: str, 
