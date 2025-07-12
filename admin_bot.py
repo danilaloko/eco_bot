@@ -154,7 +154,7 @@ class AdminBot:
         elif data == "system_menu":
             await self._show_system_menu(query)
         elif data == "add_task":
-            await self._start_add_task(query, context)
+            await self._show_add_task_menu(query)
         elif data == "list_tasks":
             await self._show_tasks_list(query)
         elif data == "pending_reports":
@@ -220,6 +220,7 @@ class AdminBot:
         elif data == "edit_task_preview":
             await self._edit_task_preview(query, context)
 
+
     async def _handle_template_callback(self, query, context, data):
         """Обрабатывает выбор шаблона через callback"""
         template_type = data.replace('template_', '')
@@ -273,9 +274,6 @@ class AdminBot:
             parse_mode='Markdown',
             reply_markup=InlineKeyboardMarkup(keyboard)
         )
-        
-        # Возвращаем состояние для ConversationHandler
-        return ADDING_TASK_DEADLINE
 
     async def _confirm_create_task(self, query, context):
         """Подтверждает создание задания"""
@@ -333,9 +331,6 @@ class AdminBot:
             # Логируем успешное создание
             logger.info(f"Создано новое задание: '{task_data['title']}' (ID: {task_id})")
             
-            # Завершаем ConversationHandler
-            return ConversationHandler.END
-            
         except Exception as e:
             logger.error(f"Ошибка при создании задания: {e}")
             
@@ -356,8 +351,6 @@ class AdminBot:
                 parse_mode='Markdown',
                 reply_markup=InlineKeyboardMarkup(keyboard)
             )
-            
-            # Не завершаем ConversationHandler при ошибке, пользователь может попробовать снова
 
     async def _edit_task_preview(self, query, context):
         """Позволяет редактировать данные задания перед созданием"""
@@ -392,9 +385,6 @@ class AdminBot:
             parse_mode='Markdown',
             reply_markup=InlineKeyboardMarkup(keyboard)
         )
-        
-        # Остаемся в том же состоянии
-        return ADDING_TASK_DEADLINE
 
     async def _show_main_menu(self, query):
         """Показывает главное меню"""
@@ -434,9 +424,6 @@ class AdminBot:
             parse_mode='Markdown',
             reply_markup=InlineKeyboardMarkup(keyboard)
         )
-        
-        # Завершаем ConversationHandler если он активен
-        return ConversationHandler.END
 
     async def _show_reports_menu(self, query):
         """Показывает меню работы с отчетами"""
@@ -558,6 +545,55 @@ class AdminBot:
             parse_mode='Markdown',
             reply_markup=InlineKeyboardMarkup(keyboard)
         )
+
+    async def _show_add_task_menu(self, query):
+        """Показывает меню добавления задания"""
+        text = (
+            "➕ **Добавление нового задания**\n\n"
+            "🚀 **Быстрый старт:**\n"
+            "• Используйте шаблоны для типовых заданий\n"
+            "• Автоматический расчет дедлайнов\n"
+            "• Предварительный просмотр перед созданием\n\n"
+            "Выберите способ создания задания:"
+        )
+        
+        keyboard = [
+            [InlineKeyboardButton("🎯 Шаблон: Наблюдение", callback_data="template_observation")],
+            [InlineKeyboardButton("🌱 Шаблон: Действие", callback_data="template_action")],
+            [InlineKeyboardButton("🔬 Шаблон: Исследование", callback_data="template_research")],
+            [InlineKeyboardButton("✏️ Создать с нуля", callback_data="create_manual")],
+            [InlineKeyboardButton("❌ Отмена", callback_data="tasks_menu")]
+        ]
+        
+        await query.edit_message_text(
+            text, 
+            parse_mode='Markdown',
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+
+    async def _start_add_task_conversation(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Начинает диалог создания задания с нуля"""
+        query = update.callback_query
+        await query.answer()
+        
+        if not await self._check_admin_access(update):
+            return ConversationHandler.END
+        
+        context.user_data['adding_task'] = {}
+        
+        text = (
+            "➕ **Создание задания с нуля**\n\n"
+            "📝 **Шаг 1/5:** Введите название задания\n"
+            "💡 *Минимум 5 символов, максимум 100*\n\n"
+            "⚡ **Быстрые команды:**\n"
+            "• `/template_observation` - Экологическое наблюдение\n"
+            "• `/template_action` - Экологическое действие\n"
+            "• `/template_research` - Исследование природы\n\n"
+            "🔧 *Для отмены введите* `/cancel`"
+        )
+        
+        await query.edit_message_text(text, parse_mode='Markdown')
+        return ADDING_TASK_TITLE
 
     async def _start_add_task(self, query, context):
         """Начинает процесс добавления задания"""
@@ -3375,27 +3411,15 @@ def main():
     
     # ConversationHandler для добавления заданий
     add_task_handler = ConversationHandler(
-        entry_points=[CallbackQueryHandler(admin_bot._start_add_task, pattern="^add_task$")],
+        entry_points=[CallbackQueryHandler(admin_bot._start_add_task_conversation, pattern="^create_manual$")],
         states={
-            ADDING_TASK_TITLE: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, admin_bot.handle_add_task_title),
-                CallbackQueryHandler(admin_bot._handle_template_callback, pattern="^template_"),
-                CallbackQueryHandler(admin_bot._show_tasks_menu, pattern="^tasks_menu$")
-            ],
+            ADDING_TASK_TITLE: [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_bot.handle_add_task_title)],
             ADDING_TASK_DESCRIPTION: [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_bot.handle_add_task_description)],
             ADDING_TASK_LINK: [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_bot.handle_add_task_link)],
             ADDING_TASK_WEEK: [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_bot.handle_add_task_week)],
-            ADDING_TASK_DEADLINE: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, admin_bot.handle_add_task_deadline),
-                CallbackQueryHandler(admin_bot._confirm_create_task, pattern="^confirm_create_task$"),
-                CallbackQueryHandler(admin_bot._edit_task_preview, pattern="^edit_task_preview$"),
-                CallbackQueryHandler(admin_bot._show_tasks_menu, pattern="^tasks_menu$")
-            ],
+            ADDING_TASK_DEADLINE: [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_bot.handle_add_task_deadline)],
         },
-        fallbacks=[
-            CommandHandler("cancel", admin_bot.cancel_conversation),
-            CallbackQueryHandler(admin_bot._show_tasks_menu, pattern="^tasks_menu$")
-        ],
+        fallbacks=[CommandHandler("cancel", admin_bot.cancel_conversation)],
         name="add_task",
         per_message=False
     )
@@ -3433,16 +3457,12 @@ def main():
         per_message=False
     )
     
-    # Регистрируем обработчики (порядок важен!)
+    # Регистрируем обработчики
     application.add_handler(CommandHandler("start", admin_bot.start_command))
-    
-    # Сначала ConversationHandlers (они имеют приоритет)
     application.add_handler(add_task_handler)
     application.add_handler(edit_title_handler)
     application.add_handler(edit_description_handler)
     application.add_handler(edit_link_handler)
-    
-    # Потом общий CallbackQueryHandler (он ловит все остальные callback'и)
     application.add_handler(CallbackQueryHandler(admin_bot.handle_callback))
     
     # Устанавливаем команды бота
