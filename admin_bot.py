@@ -210,20 +210,15 @@ class AdminBot:
         elif data.startswith("show_potential_file_"):
             await self._show_potential_file(query, data)
         elif data.startswith("edit_title_"):
-            # Эти обработчики используются в ConversationHandler
-            pass
+            await self._start_edit_title(update, context)
         elif data.startswith("edit_desc_"):
-            # Эти обработчики используются в ConversationHandler
-            pass
+            await self._start_edit_description(update, context)
         elif data.startswith("edit_link_"):
-            # Эти обработчики используются в ConversationHandler
-            pass
+            await self._start_edit_link(update, context)
         elif data.startswith("edit_open_date_"):
-            # Эти обработчики используются в ConversationHandler
-            pass
+            await self._start_edit_open_date(update, context)
         elif data.startswith("edit_deadline_"):
-            # Эти обработчики используются в ConversationHandler
-            pass
+            await self._start_edit_deadline(update, context)
         # Новые обработчики для функционала добавления заданий
         elif data.startswith("template_"):
             await self._handle_template_callback(query, context, data)
@@ -1596,7 +1591,7 @@ class AdminBot:
     async def handle_edit_title(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Обрабатывает ввод нового названия задания"""
         if not await self._check_admin_access(update):
-            return ConversationHandler.END
+            return
         
         new_title = update.message.text.strip()
         if len(new_title) < 5:
@@ -1604,12 +1599,13 @@ class AdminBot:
                 "❌ Название задания должно содержать минимум 5 символов.\n"
                 "Попробуйте еще раз:"
             )
-            return EDITING_TASK_TITLE
+            return
         
         task_id = context.user_data.get('editing_task_id')
         if not task_id:
             await update.message.reply_text("❌ Ошибка: ID задания не найден.")
-            return ConversationHandler.END
+            context.user_data.clear()
+            return
         
         # Обновляем название в базе данных
         try:
@@ -1639,8 +1635,6 @@ class AdminBot:
             await update.message.reply_text(
                 f"❌ Ошибка при изменении названия: {str(e)}"
             )
-        
-        return ConversationHandler.END
 
     async def _start_edit_description(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Начинает редактирование описания задания"""
@@ -1681,19 +1675,22 @@ class AdminBot:
             parse_mode='Markdown',
             reply_markup=InlineKeyboardMarkup(keyboard)
         )
-        return EDITING_TASK_DESCRIPTION
+        
+        # Устанавливаем состояние редактирования
+        context.user_data['editing_state'] = EDITING_TASK_DESCRIPTION
 
     async def handle_edit_description(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Обрабатывает ввод нового описания задания"""
         if not await self._check_admin_access(update):
-            return ConversationHandler.END
+            return
         
         new_description = update.message.text.strip()
         task_id = context.user_data.get('editing_task_id')
         
         if not task_id:
             await update.message.reply_text("❌ Ошибка: ID задания не найден.")
-            return ConversationHandler.END
+            context.user_data.clear()
+            return
         
         # Обновляем описание в базе данных
         try:
@@ -1723,8 +1720,6 @@ class AdminBot:
             await update.message.reply_text(
                 f"❌ Ошибка при изменении описания: {str(e)}"
             )
-        
-        return ConversationHandler.END
 
     async def _start_edit_title(self, update, context):
         """Начинает редактирование названия задания"""
@@ -1765,7 +1760,9 @@ class AdminBot:
             parse_mode='Markdown',
             reply_markup=InlineKeyboardMarkup(keyboard)
         )
-        return EDITING_TASK_TITLE
+        
+        # Устанавливаем состояние редактирования
+        context.user_data['editing_state'] = EDITING_TASK_TITLE
 
     async def _start_edit_link(self, update, context):
         """Начинает редактирование ссылки задания"""
@@ -1805,12 +1802,14 @@ class AdminBot:
             parse_mode='Markdown',
             reply_markup=InlineKeyboardMarkup(keyboard)
         )
-        return EDITING_TASK_LINK
+        
+        # Устанавливаем состояние редактирования
+        context.user_data['editing_state'] = EDITING_TASK_LINK
 
     async def handle_edit_link(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Обрабатывает ввод новой ссылки задания"""
         if not await self._check_admin_access(update):
-            return ConversationHandler.END
+            return
         
         new_link = update.message.text.strip()
         if new_link.lower() in ['нет', 'no', '-', 'убрать']:
@@ -1819,7 +1818,8 @@ class AdminBot:
         task_id = context.user_data.get('editing_task_id')
         if not task_id:
             await update.message.reply_text("❌ Ошибка: ID задания не найден.")
-            return ConversationHandler.END
+            context.user_data.clear()
+            return
         
         # Обновляем ссылку в базе данных
         try:
@@ -1849,8 +1849,6 @@ class AdminBot:
             await update.message.reply_text(
                 f"❌ Ошибка при изменении ссылки: {str(e)}"
             )
-        
-        return ConversationHandler.END
 
     async def _toggle_task_status(self, query, data):
         """Переключает статус задания (открыто/закрыто)"""
@@ -2997,19 +2995,22 @@ class AdminBot:
             parse_mode='Markdown',
             reply_markup=InlineKeyboardMarkup(keyboard)
         )
-        return EDITING_TASK_OPEN_DATE
+        
+        # Устанавливаем состояние редактирования
+        context.user_data['editing_state'] = EDITING_TASK_OPEN_DATE
 
     async def handle_edit_open_date(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Обрабатывает ввод новой даты открытия задания"""
         if not await self._check_admin_access(update):
-            return ConversationHandler.END
+            return
         
         open_date_input = update.message.text.strip().lower()
         task_id = context.user_data.get('editing_task_id')
         
         if not task_id:
             await update.message.reply_text("❌ Ошибка: ID задания не найден.")
-            return ConversationHandler.END
+            context.user_data.clear()
+            return
         
         try:
             # Обработка различных вариантов ввода
@@ -3043,7 +3044,7 @@ class AdminBot:
                         "Дата открытия должна быть в будущем или сейчас.\n"
                         "Попробуйте еще раз:"
                     )
-                    return EDITING_TASK_OPEN_DATE
+                    return
                     
         except ValueError as e:
             await update.message.reply_text(
@@ -3055,7 +3056,7 @@ class AdminBot:
                 "• `завтра` - завтра в 09:00\n"
                 "• `неделя` - через неделю в 09:00"
             )
-            return EDITING_TASK_OPEN_DATE
+            return
         
         # Обновляем дату открытия в базе данных
         try:
@@ -3094,8 +3095,6 @@ class AdminBot:
             await update.message.reply_text(
                 f"❌ Ошибка при изменении даты открытия: {str(e)}"
             )
-        
-        return ConversationHandler.END
 
     async def _start_edit_deadline(self, update, context):
         """Начинает редактирование дедлайна задания"""
@@ -3160,19 +3159,22 @@ class AdminBot:
             parse_mode='Markdown',
             reply_markup=InlineKeyboardMarkup(keyboard)
         )
-        return EDITING_TASK_DEADLINE
+        
+        # Устанавливаем состояние редактирования
+        context.user_data['editing_state'] = EDITING_TASK_DEADLINE
 
     async def handle_edit_deadline(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Обрабатывает ввод нового дедлайна задания"""
         if not await self._check_admin_access(update):
-            return ConversationHandler.END
+            return
         
         deadline_input = update.message.text.strip().lower()
         task_id = context.user_data.get('editing_task_id')
         
         if not task_id:
             await update.message.reply_text("❌ Ошибка: ID задания не найден.")
-            return ConversationHandler.END
+            context.user_data.clear()
+            return
         
         # Получаем дату открытия для валидации
         with self.db._get_connection() as conn:
@@ -3218,7 +3220,7 @@ class AdminBot:
                         "Дедлайн должен быть в будущем.\n"
                         "Попробуйте еще раз:"
                     )
-                    return EDITING_TASK_DEADLINE
+                    return
                 
                 # Проверка, что дедлайн не раньше даты открытия
                 if new_deadline and open_date:
@@ -3229,7 +3231,7 @@ class AdminBot:
                             "Дедлайн должен быть позже даты открытия задания.\n"
                             "Попробуйте еще раз:"
                         )
-                        return EDITING_TASK_DEADLINE
+                        return
                     
         except ValueError as e:
             await update.message.reply_text(
@@ -3242,7 +3244,7 @@ class AdminBot:
                 "• `неделя` - через неделю\n"
                 "• `нет` - без дедлайна"
             )
-            return EDITING_TASK_DEADLINE
+            return
         
         # Обновляем дедлайн в базе данных
         try:
@@ -3277,8 +3279,26 @@ class AdminBot:
             await update.message.reply_text(
                 f"❌ Ошибка при изменении дедлайна: {str(e)}"
             )
+
+    async def handle_edit_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Обрабатывает сообщения во время редактирования заданий"""
+        if not await self._check_admin_access(update):
+            return
         
-        return ConversationHandler.END
+        # Проверяем, есть ли активное состояние редактирования
+        editing_state = context.user_data.get('editing_state')
+        
+        if editing_state == EDITING_TASK_TITLE:
+            await self.handle_edit_title(update, context)
+        elif editing_state == EDITING_TASK_DESCRIPTION:
+            await self.handle_edit_description(update, context)
+        elif editing_state == EDITING_TASK_LINK:
+            await self.handle_edit_link(update, context)
+        elif editing_state == EDITING_TASK_OPEN_DATE:
+            await self.handle_edit_open_date(update, context)
+        elif editing_state == EDITING_TASK_DEADLINE:
+            await self.handle_edit_deadline(update, context)
+        # Если состояние не найдено, игнорируем сообщение
 
     async def cancel_conversation(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Отменяет текущий диалог"""
@@ -3368,70 +3388,17 @@ def main():
         per_message=True
     )
     
-    # ConversationHandler для редактирования названия задания
-    edit_title_handler = ConversationHandler(
-        entry_points=[CallbackQueryHandler(admin_bot._start_edit_title, pattern="^edit_title_")],
-        states={
-            EDITING_TASK_TITLE: [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_bot.handle_edit_title)]
-        },
-        fallbacks=[CommandHandler("cancel", admin_bot.cancel_conversation)],
-        name="edit_title",
-        per_message=True
-    )
-    
-    # ConversationHandler для редактирования описания задания
-    edit_description_handler = ConversationHandler(
-        entry_points=[CallbackQueryHandler(admin_bot._start_edit_description, pattern="^edit_desc_")],
-        states={
-            EDITING_TASK_DESCRIPTION: [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_bot.handle_edit_description)]
-        },
-        fallbacks=[CommandHandler("cancel", admin_bot.cancel_conversation)],
-        name="edit_description", 
-        per_message=True
-    )
-    
-    # ConversationHandler для редактирования ссылки задания
-    edit_link_handler = ConversationHandler(
-        entry_points=[CallbackQueryHandler(admin_bot._start_edit_link, pattern="^edit_link_")],
-        states={
-            EDITING_TASK_LINK: [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_bot.handle_edit_link)]
-        },
-        fallbacks=[CommandHandler("cancel", admin_bot.cancel_conversation)],
-        name="edit_link",
-        per_message=True
-    )
-    
-    # ConversationHandler для редактирования даты открытия задания
-    edit_open_date_handler = ConversationHandler(
-        entry_points=[CallbackQueryHandler(admin_bot._start_edit_open_date, pattern="^edit_open_date_")],
-        states={
-            EDITING_TASK_OPEN_DATE: [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_bot.handle_edit_open_date)]
-        },
-        fallbacks=[CommandHandler("cancel", admin_bot.cancel_conversation)],
-        name="edit_open_date",
-        per_message=True
-    )
-    
-    # ConversationHandler для редактирования дедлайна задания
-    edit_deadline_handler = ConversationHandler(
-        entry_points=[CallbackQueryHandler(admin_bot._start_edit_deadline, pattern="^edit_deadline_")],
-        states={
-            EDITING_TASK_DEADLINE: [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_bot.handle_edit_deadline)]
-        },
-        fallbacks=[CommandHandler("cancel", admin_bot.cancel_conversation)],
-        name="edit_deadline",
-        per_message=True
+    # Обработчик сообщений для редактирования заданий
+    edit_message_handler = MessageHandler(
+        filters.TEXT & ~filters.COMMAND, 
+        admin_bot.handle_edit_message
     )
     
     # Регистрируем обработчики
     application.add_handler(CommandHandler("start", admin_bot.start_command))
     application.add_handler(add_task_handler)
-    application.add_handler(edit_title_handler)
-    application.add_handler(edit_description_handler)
-    application.add_handler(edit_link_handler)
-    application.add_handler(edit_open_date_handler)
-    application.add_handler(edit_deadline_handler)
     application.add_handler(CallbackQueryHandler(admin_bot.handle_callback))
+    application.add_handler(edit_message_handler)
     
     # Устанавливаем команды бота
     async def set_commands(app):
