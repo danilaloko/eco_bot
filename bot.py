@@ -12,6 +12,7 @@ from telegram.ext import (
     Application, CommandHandler, MessageHandler, CallbackQueryHandler,
     filters, ContextTypes, ConversationHandler, BaseHandler
 )
+from telegram.helpers import escape_markdown
 
 from database import Database
 from keyboards import Keyboards
@@ -2345,7 +2346,7 @@ class EcoBot:
             open_date_str = open_date_dt.strftime('%d.%m.%Y в %H:%M МСК')
         text = (
             f"📋 **Информация о задании**\n\n"
-            f"🆔 **ID:** {task_id}\n"
+            f"🆔 **ID:** {title}\n"
             f"📝 **Название:** {title}\n"
             f"📄 **Описание:** {description or 'не указано'}\n"
             f"🔗 **Ссылка:** {link or 'не указана'}\n"
@@ -2354,6 +2355,7 @@ class EcoBot:
             f"⏰ **Дедлайн:** {deadline_str}\n"
             f"📊 **Статус:** {status}"
         )
+        safe_text = escape_markdown(text, version=2)
         # Кнопки: ссылка (если есть), назад к банку заданий, главное меню
         keyboard = []
         if link:
@@ -2361,8 +2363,8 @@ class EcoBot:
         keyboard.append([InlineKeyboardButton("🔙 Назад к банку заданий", callback_data="tasks_bank")])
         keyboard.append([InlineKeyboardButton("🏠 Главное меню", callback_data="main_menu")])
         await query.edit_message_text(
-            text,
-            parse_mode='Markdown',
+            safe_text,
+            parse_mode='MarkdownV2',
             reply_markup=InlineKeyboardMarkup(keyboard)
         )
 
