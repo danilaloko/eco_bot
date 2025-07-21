@@ -538,3 +538,13 @@ class Database:
                 'total': total,
                 'types': types_count
             } 
+
+    def get_task_by_id(self, task_id: int) -> Optional[tuple]:
+        """Возвращает полную информацию о задании по его id"""
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                SELECT id, title, description, link, is_open, week_number, deadline, open_date
+                FROM tasks WHERE id = ?
+            ''', (task_id,))
+            return cursor.fetchone() 
