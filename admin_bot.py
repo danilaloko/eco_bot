@@ -21,6 +21,7 @@ from telegram.ext import (
     Application, CommandHandler, CallbackQueryHandler, 
     MessageHandler, filters, ContextTypes, ConversationHandler
 )
+from telegram.helpers import escape_markdown
 
 from database import Database
 
@@ -1241,6 +1242,9 @@ class AdminBot:
             f"📤 **Отчетов получено:** {submissions_count}"
         )
         
+        # Экранируем текст для MarkdownV2
+        safe_text = escape_markdown(text, version=2)
+        
         keyboard = [
             [InlineKeyboardButton("✏️ Редактировать", callback_data=f"edit_task_{task_id}")],
             [InlineKeyboardButton("📤 Отчеты по заданию", callback_data=f"task_reports_{task_id}")],
@@ -1251,8 +1255,8 @@ class AdminBot:
         ]
         
         await query.edit_message_text(
-            text,
-            parse_mode='Markdown',
+            safe_text,
+            parse_mode='MarkdownV2',
             reply_markup=InlineKeyboardMarkup(keyboard)
         )
 
