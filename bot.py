@@ -1233,7 +1233,7 @@ class EcoBot:
                 short_title = title[:40] + "..." if len(title) > 40 else title
                 keyboard.append([InlineKeyboardButton(
                     f"🟢 {short_title}", 
-                    url=link
+                    callback_data=f"bank_task_{task_id}"
                 )])
         
         # Кнопка возврата в главное меню
@@ -1679,7 +1679,7 @@ class EcoBot:
         if not self.db.is_user_registered(user_id):
             await query.edit_message_text(
                 "❌ Сначала необходимо завершить регистрацию. Отправьте команду /start",
-                reply_markup=InlineKeyboardMarkup([[
+                reply_markup=InlineKeyboardMarkup([[ 
                     InlineKeyboardButton("🏠 Главное меню", callback_data="main_menu")
                 ]])
             )
@@ -1691,6 +1691,10 @@ class EcoBot:
             
             elif data == "tasks_bank":
                 await self._show_tasks_bank_callback(query)
+            
+            elif data.startswith("bank_task_"):
+                task_id = int(data.split("_")[-1])
+                await self._show_task_info_callback(query, task_id)
             
             elif data.startswith("submit_task_"):
                 task_id = int(data.split("_")[-1])
@@ -1711,7 +1715,7 @@ class EcoBot:
             else:
                 await query.edit_message_text(
                     "❓ Неизвестная команда. Возвращаемся в главное меню.",
-                    reply_markup=InlineKeyboardMarkup([[
+                    reply_markup=InlineKeyboardMarkup([[ 
                         InlineKeyboardButton("🏠 Главное меню", callback_data="main_menu")
                     ]])
                 )
@@ -1720,7 +1724,7 @@ class EcoBot:
             logger.error(f"Ошибка в обработчике callback: {e}")
             await query.edit_message_text(
                 "⚠️ Произошла ошибка при обработке запроса.",
-                reply_markup=InlineKeyboardMarkup([[
+                reply_markup=InlineKeyboardMarkup([[ 
                     InlineKeyboardButton("🏠 Главное меню", callback_data="main_menu")
                 ]])
             )
@@ -1805,7 +1809,7 @@ class EcoBot:
                 short_title = title[:40] + "..." if len(title) > 40 else title
                 keyboard.append([InlineKeyboardButton(
                     f"🟢 {short_title}", 
-                    url=link
+                    callback_data=f"bank_task_{task_id}"
                 )])
         
         # Кнопка возврата в главное меню
@@ -2314,6 +2318,53 @@ class EcoBot:
         except Exception as e:
             logger.error(f"Ошибка при скачивании файла: {e}")
             return None
+
+    async def _show_task_info_callback(self, query, task_id):
+        """Показывает подробную информацию о задании по его ID"""
+        # Получаем информацию о задании
+        task = self.db.get_task_by_id(task_id)
+        if not task:
+            await query.edit_message_text(
+                "❌ Задание не найдено.",
+                reply_markup=InlineKeyboardMarkup([[ 
+                    InlineKeyboardButton("🏦 Банк заданий", callback_data="tasks_bank")
+                ]])
+            )
+            return
+        task_id, title, description, link, is_open, week_number, deadline, open_date = task[:8]
+        status = "🟢 Открыто" if is_open else "📁 Архив"
+        deadline_str = "не установлен"
+        if deadline:
+            from datetime import datetime
+            deadline_dt = datetime.fromisoformat(deadline)
+            deadline_str = deadline_dt.strftime('%d.%m.%Y в %H:%M МСК')
+        open_date_str = "не установлена"
+        if open_date:
+            from datetime import datetime
+            open_date_dt = datetime.fromisoformat(open_date)
+            open_date_str = open_date_dt.strftime('%d.%m.%Y в %H:%M МСК')
+        text = (
+            f"📋 **Информация о задании**\n\n"
+            f"🆔 **ID:** {task_id}\n"
+            f"📝 **Название:** {title}\n"
+            f"📄 **Описание:** {description or 'не указано'}\n"
+            f"🔗 **Ссылка:** {link or 'не указана'}\n"
+            f"📅 **Дата открытия:** {open_date_str}\n"
+            f"📅 **Неделя:** {week_number or 'не указана'} *(устаревшее поле)*\n"
+            f"⏰ **Дедлайн:** {deadline_str}\n"
+            f"📊 **Статус:** {status}"
+        )
+        # Кнопки: ссылка (если есть), назад к банку заданий, главное меню
+        keyboard = []
+        if link:
+            keyboard.append([InlineKeyboardButton("🔗 Перейти к заданию", url=link)])
+        keyboard.append([InlineKeyboardButton("🔙 Назад к банку заданий", callback_data="tasks_bank")])
+        keyboard.append([InlineKeyboardButton("🏠 Главное меню", callback_data="main_menu")])
+        await query.edit_message_text(
+            text,
+            parse_mode='Markdown',
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
 
 def main():
     """Основная функция запуска бота"""
